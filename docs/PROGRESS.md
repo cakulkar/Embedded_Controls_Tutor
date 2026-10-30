@@ -105,7 +105,7 @@ Simulink when installed** and on the **ECSim engine** otherwise.
 | Content B02: Simulink semantics, MIL, PI model practical (8 requirement checks, 4 mutants) | built | grader + parity tests |
 | GUI: model exercises in Academy with "Use Simulink model…"; CLI `model check`, `submit --file x.slx` | built | `test_model_exercise_in_academy`, `test_cli_model_check_and_slx_submit` |
 
-**Test totals:** 172 passed on Linux.
+**Test totals:** 172 passed on Linux and in CI on `ubuntu-latest` and `windows-latest`.
 
 ### Verification still needed on a machine with MATLAB
 1. `pip install matlabengine` (version matching the MATLAB release), then `ecsim doctor` shows `matlab_engine` available.
