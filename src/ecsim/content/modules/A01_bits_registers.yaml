@@ -1,0 +1,317 @@
+id: A01
+department: A
+title: "Bit manipulation, registers and byte order"
+ordinal: 1
+version: "1"
+
+lessons:
+  - id: A01-L1
+    title: "Memory-mapped registers and volatile"
+    body: |
+      # Memory-mapped registers
+
+      On a microcontroller, peripherals (ADC, timers, CAN controllers) are controlled
+      through **registers mapped into the address space**. Writing to address
+      `0xF0001000` might start a conversion; reading it might return a status flag
+      that the *hardware* changes at any time.
+
+      ```c
+      #define ADC0_CTRL (*(volatile uint32_t *)0xF0001000u)
+      ADC0_CTRL |= (1u << 0);      /* start conversion */
+      ```
+
+      ### Why `volatile`
+      The compiler assumes ordinary memory only changes when *your code* writes it.
+      Without `volatile`, a polling loop such as `while ((STATUS & DONE) == 0u) {}`
+      may be optimised into a single read and an infinite loop. `volatile` tells the
+      compiler every access is observable and must be performed, in order.
+
+      `volatile` does **not** make an access atomic and does **not** provide
+      inter-task synchronisation. Shared data between an ISR and a task still needs a
+      critical section or an atomic access of a size the core guarantees.
+
+      ### Read-modify-write
+      `REG |= mask` is a read, an OR, and a write. If an interrupt modifies the same
+      register in between, one update is lost. Many MCUs therefore provide separate
+      set/clear registers or bit-banding; on Infineon AURIX, for example, many SFRs
+      have dedicated set/clear bit fields. Always check the reference manual.
+
+  - id: A01-L2
+    title: "Bit fields with masks and shifts"
+    body: |
+      # Setting, clearing and extracting fields
+
+      | Operation | Idiom |
+      |---|---|
+      | set bit n | `x |= (1u << n);` |
+      | clear bit n | `x &= ~(1u << n);` |
+      | toggle bit n | `x ^= (1u << n);` |
+      | test bit n | `((x >> n) & 1u) != 0u` |
+      | write field (pos, width) | `x = (x & ~(M << pos)) | ((v & M) << pos)` with `M = (1u<<width)-1u` |
+
+      Pitfalls an embedded reviewer will flag:
+
+      * Shifting a 32-bit value by 32 or more is **undefined behaviour** in C. A
+        width-32 field needs a special case.
+      * Shifting a *signed* value left into or past the sign bit is undefined;
+        use unsigned constants (`1u`).
+      * Always mask the value you insert; otherwise an out-of-range value
+        corrupts neighbouring fields.
+
+  - id: A01-L3
+    title: "Endianness and CAN signal packing"
+    body: |
+      # Byte order
+
+      *Little-endian* (Intel) stores the least significant byte at the lowest
+      address; *big-endian* (Motorola) stores the most significant byte first.
+      CAN signal definitions (DBC files) specify the byte order per signal.
+
+      In Intel byte order a signal with **start bit** `s` and **length** `L`
+      occupies bits `s … s+L-1`, where bit `i` is bit `i % 8` of byte `i / 8`.
+      Treat the 8 payload bytes as one 64-bit little-endian integer, shift right
+      by `s` and mask `L` bits.
+
+      SAE J1939 uses little-endian for multi-byte parameters. Example: in EEC1
+      (PGN 61444) engine speed (SPN 190) occupies bytes 4–5 (1-based), i.e. start
+      bit 24, length 16, resolution 0.125 rpm/bit, offset 0.
+
+      Physical value = raw × factor + offset. Always check the raw value against
+      the "error" and "not available" ranges the protocol defines before
+      converting it.
+
+exercises:
+  - id: A01-E1
+    kind: choice
+    title: "What volatile guarantees"
+    competency: EMB
+    level: beginner
+    points: 10
+    prompt: |
+      A 32-bit status register is read in a polling loop and shared with an ISR.
+      Which statement about declaring it `volatile` is correct?
+    spec:
+      options:
+        - "volatile makes each read/modify/write of the register atomic."
+        - "volatile forces the compiler to perform every access in program order, but provides no atomicity or mutual exclusion."
+        - "volatile disables the data cache for that address."
+        - "volatile is only needed when compiler optimisation is off."
+      correct: [1]
+    hints:
+      - "Think about what the compiler is allowed to assume about ordinary memory."
+      - "Does a keyword that only constrains the compiler change what the CPU bus does in one cycle?"
+    solution: |
+      **Option 2.** `volatile` constrains the *compiler*: accesses cannot be
+      removed, merged or reordered relative to other volatile accesses. It says
+      nothing about atomicity (a RMW is still three operations), caching (an MPU /
+      cache attribute) or mutual exclusion (critical sections, atomics).
+
+  - id: A01-E2
+    kind: numeric
+    title: "Trace a register sequence"
+    competency: EMB
+    level: beginner
+    points: 10
+    prompt: |
+      ```c
+      uint32_t reg = 0x00F0u;
+      reg |= (1u << 3);
+      reg &= ~(1u << 5);
+      reg ^= 0x0F00u;
+      ```
+      What is the final value of `reg`? (Hex like `0x1234` or decimal accepted.)
+    spec: {answer: 4056, abs_tol: 0, integer: true}
+    hints:
+      - "Work one line at a time and write the value in binary for the low byte."
+      - "After the first two lines the value is 0x00D8."
+    solution: |
+      0x00F0 | 0x0008 = 0x00F8 → & ~0x0020 = 0x00D8 → ^ 0x0F00 = **0x0FD8** (4056).
+
+  - id: A01-E3
+    kind: c_function
+    title: "Write a register bit field safely"
+    competency: EMB
+    level: intermediate
+    points: 25
+    practical: true
+    prompt: |
+      Implement
+
+      ```c
+      uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value);
+      ```
+
+      Return `reg` with the field `[pos, pos+width-1]` replaced by the low `width`
+      bits of `value`; all other bits unchanged.
+
+      Requirements:
+      * `width` 1…32 and `pos + width <= 32`; otherwise return `reg` unchanged.
+      * Excess bits of `value` must not leak into neighbouring fields.
+      * No undefined behaviour for any valid input (including `width == 32`).
+
+      `<stdint.h>`, `<stddef.h>` and `<stdbool.h>` are already included. Do not write `main`.
+    spec:
+      prototypes: |
+        uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value);
+      starter: |
+        uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value)
+        {
+            /* TODO */
+            (void)pos; (void)width; (void)value;
+            return reg;
+        }
+      harness: |
+        int main(void)
+        {
+            CHECK_EQ_U(reg_set_field(0u, 4u, 4u, 0xAu), 0xA0u, "basic insert");
+            CHECK_EQ_U(reg_set_field(0xFFFFFFFFu, 8u, 8u, 0u), 0xFFFF00FFu, "clear field keeps neighbours");
+            CHECK_EQ_U(reg_set_field(0u, 0u, 4u, 0x1Fu), 0x0Fu, "value masked to width");
+            CHECK_EQ_U(reg_set_field(0x12345678u, 0u, 32u, 0xDEADBEEFu), 0xDEADBEEFu, "width 32");
+            CHECK_EQ_U(reg_set_field(0u, 31u, 1u, 1u), 0x80000000u, "top bit");
+            CHECK_EQ_U(reg_set_field(0xAAAAAAAAu, 0u, 0u, 0xFu), 0xAAAAAAAAu, "width 0 rejected");
+            CHECK_EQ_U(reg_set_field(0xAAAAAAAAu, 30u, 4u, 0xFu), 0xAAAAAAAAu, "field past bit 31 rejected");
+            CHECK_EQ_U(reg_set_field(0xAAAAAAAAu, 0u, 33u, 0u), 0xAAAAAAAAu, "width 33 rejected");
+            CHECK_EQ_U(reg_set_field(0x0000FF00u, 12u, 4u, 0x3u), 0x00003F00u, "replace inside existing ones");
+            return ECSIM_DONE();
+        }
+      reference: |
+        uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value)
+        {
+            uint32_t result = reg;
+            if ((width >= 1u) && (width <= 32u) && (((uint32_t)pos + (uint32_t)width) <= 32u))
+            {
+                uint32_t field = (width == 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
+                uint32_t mask = field << pos;
+                result = (reg & ~mask) | ((value & field) << pos);
+            }
+            return result;
+        }
+      mutants:
+        - |
+          uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value)
+          {
+              uint32_t result = reg;
+              if ((width >= 1u) && (width <= 32u) && (((uint32_t)pos + (uint32_t)width) <= 32u))
+              {
+                  uint32_t field = (width == 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
+                  result = (reg & ~(field << pos)) | (value << pos);
+              }
+              return result;
+          }
+        - |
+          uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value)
+          {
+              uint32_t field = (width >= 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
+              return (reg & ~(field << pos)) | ((value & field) << pos);
+          }
+    hints:
+      - "Build a mask of `width` ones first, then shift it to `pos`."
+      - "`1u << 32` is undefined behaviour. Which input needs a special case for the mask?"
+      - "result = (reg & ~(mask << pos)) | ((value & mask) << pos), guarded by the argument check."
+    solution: |
+      ```c
+      uint32_t reg_set_field(uint32_t reg, uint8_t pos, uint8_t width, uint32_t value)
+      {
+          uint32_t result = reg;
+          if ((width >= 1u) && (width <= 32u) && (((uint32_t)pos + (uint32_t)width) <= 32u))
+          {
+              uint32_t field = (width == 32u) ? 0xFFFFFFFFu : ((1u << width) - 1u);
+              uint32_t mask = field << pos;
+              result = (reg & ~mask) | ((value & field) << pos);
+          }
+          return result;
+      }
+      ```
+      Review points: single exit point, unsigned constants, width-32 special case,
+      argument promotion to `uint32_t` before adding `pos + width`.
+
+  - id: A01-E4
+    kind: c_function
+    title: "Decode an Intel-order CAN signal (J1939 engine speed)"
+    competency: COM
+    level: intermediate
+    points: 25
+    practical: true
+    prompt: |
+      Implement
+
+      ```c
+      uint32_t can_get_signal_le(const uint8_t data[8], uint8_t start_bit, uint8_t length);
+      ```
+
+      Return the raw unsigned value of an Intel (little-endian) signal.
+      Bit `i` of the payload is bit `i % 8` of `data[i / 8]`.
+
+      * Valid: `data != NULL`, `1 <= length <= 32`, `start_bit + length <= 64`.
+        Otherwise return 0.
+      * The harness includes EEC1 engine speed (start bit 24, length 16).
+    spec:
+      prototypes: |
+        uint32_t can_get_signal_le(const uint8_t data[8], uint8_t start_bit, uint8_t length);
+      starter: |
+        uint32_t can_get_signal_le(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+        {
+            /* TODO */
+            (void)data; (void)start_bit; (void)length;
+            return 0u;
+        }
+      harness: |
+        int main(void)
+        {
+            const uint8_t eec1[8] = {0xF0u, 0x7Du, 0x7Du, 0x80u, 0x3Eu, 0x00u, 0xF0u, 0x7Du};
+            const uint8_t a[8] = {0xB0u, 0, 0, 0, 0, 0, 0, 0};
+            const uint8_t b[8] = {0xF0u, 0x0Fu, 0, 0, 0, 0, 0, 0};
+            const uint8_t c[8] = {0x78u, 0x56u, 0x34u, 0x12u, 0, 0, 0, 0};
+            const uint8_t d[8] = {0, 0, 0, 0, 0, 0, 0, 0xABu};
+            const uint8_t e[8] = {0x01u, 0x02u, 0x03u, 0x04u, 0x05u, 0x06u, 0x07u, 0x88u};
+            CHECK_EQ_U(can_get_signal_le(eec1, 24u, 16u), 16000u, "EEC1 engine speed raw (=2000 rpm)");
+            CHECK_EQ_U(can_get_signal_le(a, 4u, 4u), 0xBu, "high nibble of byte 0");
+            CHECK_EQ_U(can_get_signal_le(b, 4u, 8u), 0xFFu, "signal crossing a byte boundary");
+            CHECK_EQ_U(can_get_signal_le(c, 0u, 32u), 0x12345678u, "32-bit signal");
+            CHECK_EQ_U(can_get_signal_le(d, 56u, 8u), 0xABu, "last byte");
+            CHECK_EQ_U(can_get_signal_le(e, 63u, 1u), 1u, "bit 63");
+            CHECK_EQ_U(can_get_signal_le(e, 60u, 8u), 0u, "past end rejected");
+            CHECK_EQ_U(can_get_signal_le(e, 0u, 0u), 0u, "length 0 rejected");
+            CHECK_EQ_U(can_get_signal_le(e, 0u, 33u), 0u, "length 33 rejected");
+            CHECK_EQ_U(can_get_signal_le(NULL, 0u, 8u), 0u, "NULL rejected");
+            CHECK_EQ_U(can_get_signal_le(e, 36u, 28u), 0x8807060u, "long unaligned signal");
+            return ECSIM_DONE();
+        }
+      reference: |
+        uint32_t can_get_signal_le(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+        {
+            uint32_t out = 0u;
+            if ((data != NULL) && (length >= 1u) && (length <= 32u) &&
+                (((uint32_t)start_bit + (uint32_t)length) <= 64u))
+            {
+                uint64_t raw = 0u;
+                uint8_t i;
+                for (i = 0u; i < 8u; i++)
+                {
+                    raw |= ((uint64_t)data[i]) << (8u * i);
+                }
+                raw >>= start_bit;
+                raw &= (length == 32u) ? 0xFFFFFFFFu : ((((uint64_t)1u) << length) - 1u);
+                out = (uint32_t)raw;
+            }
+            return out;
+        }
+      mutants:
+        - |
+          uint32_t can_get_signal_le(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+          {
+              uint64_t raw = 0u;
+              uint8_t i;
+              if ((data == NULL) || (length < 1u) || (length > 32u) || ((start_bit + length) > 64u)) { return 0u; }
+              for (i = 0u; i < 8u; i++) { raw |= ((uint64_t)data[i]) << (8u * (7u - i)); }
+              raw >>= start_bit;
+              return (uint32_t)(raw & ((((uint64_t)1u) << length) - 1u));
+          }
+    hints:
+      - "Assemble the eight bytes into one 64-bit integer with data[0] as the least significant byte."
+      - "Then shift right by start_bit and mask `length` bits. Use a 64-bit type for the mask too."
+      - "Check the argument constraints first and return 0 if any fails."
+    solution: |
+      Pack little-endian into a `uint64_t`, shift by `start_bit`, mask `length`
+      bits (special-case 32 or use a 64-bit mask), cast to `uint32_t`. The EEC1
+      raw value 16000 × 0.125 rpm/bit = 2000 rpm.

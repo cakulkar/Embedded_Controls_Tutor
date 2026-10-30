@@ -1,0 +1,86 @@
+import pytest
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from ecsim.gui.main_window import PLANNED, SCREEN_ORDER, MainWindow  # noqa: E402
+from ecsim.gui.screens import PlannedScreen  # noqa: E402
+from ecsim.gui.widgets import THEME  # noqa: E402
+
+from conftest import needs_cc  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def app():
+    a = QApplication.instance() or QApplication([])
+    a.setStyleSheet(THEME)
+    return a
+
+
+@pytest.fixture
+def win(app, ctx, learner):
+    w = MainWindow(ctx, learner)
+    yield w
+    w.close()
+
+
+def test_all_fourteen_screens(win):
+    assert len(SCREEN_ORDER) == 14 and win.stack.count() == 14
+    for name in SCREEN_ORDER:
+        win.show_screen(name)
+        screen = win.screens[name]
+        # Unbuilt screens are honestly labelled with their phase.
+        assert isinstance(screen, PlannedScreen) == (name in PLANNED)
+
+
+def test_numeric_submit_updates_dashboard(win):
+    academy = win.show_screen("Learning Academy")
+    academy.select("A02-E1")
+    ev = academy.exercise_view
+    assert ev.ex.id == "A02-E1"
+    ev.numeric.setText("-12288")
+    ev.submit()
+    assert "PASS" in ev.feedback.toPlainText()
+    dash = win.show_screen("Engineering Dashboard")
+    assert dash.recent.rowCount() == 1 and dash.recent.item(0, 1).text() == "A02-E1"
+
+
+def test_choice_and_solution_gate(win):
+    academy = win.show_screen("Learning Academy")
+    academy.select("A01-E1")
+    ev = academy.exercise_view
+    assert ev.request_solution(confirm=False) is None          # gated, no dialog
+    ev.choice_group.button(0).setChecked(True)
+    ev.submit()
+    assert "FAIL" in ev.feedback.toPlainText()
+    assert "Option 2" in ev.request_solution()
+
+
+def test_hint_button_state(win):
+    academy = win.show_screen("Learning Academy")
+    academy.select("A02-E2")
+    ev = academy.exercise_view
+    ev.next_hint()
+    assert "Hint 1" in ev.hints.text() and not ev.hint_btn.isEnabled()
+
+
+@needs_cc
+def test_code_exercise_in_gui(win, ctx):
+    academy = win.show_screen("Learning Academy")
+    academy.select("A01-E3")
+    ev = academy.exercise_view
+    assert "TODO" in ev.code.toPlainText()
+    ev.code.setPlainText(ctx.catalog.exercise("A01-E3").spec["reference"])
+    ev.submit()
+    assert "9/9" in ev.feedback.toPlainText()
+
+
+def test_lesson_and_track(win, ctx, learner):
+    academy = win.show_screen("Learning Academy")
+    academy.select("B01-L1")
+    academy.lesson_view.done_btn.click()
+    assert "B01-L1" in ctx.learning.completed_lessons(learner)
+    comp = win.show_screen("Competency & Certification")
+    comp.track.setCurrentIndex(comp.track.findData("ADAS_CTL"))
+    assert ctx.competency.profile(learner).track_code == "ADAS_CTL"

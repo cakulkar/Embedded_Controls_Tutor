@@ -1,0 +1,276 @@
+id: B01
+department: B
+title: "Discrete PI control of an electric motor"
+ordinal: 1
+version: "1"
+
+lessons:
+  - id: B01-L1
+    title: "First-order motor speed model"
+    body: |
+      # Plant model
+
+      Neglecting armature inductance, a DC/PMSM motor's speed response to a
+      voltage (or torque) command is well approximated by a first-order system:
+
+      $$ G(s) = \frac{\omega(s)}{u(s)} = \frac{K}{\tau s + 1} $$
+
+      * `K` — steady-state gain (rpm/V)
+      * `τ` — mechanical time constant `J / b` (s)
+
+      ### Discretisation (zero-order hold)
+      With a controller running every `Ts` seconds and the actuator holding its
+      value between samples, the exact discrete equivalent is
+
+      $$ \omega[k+1] = a\,\omega[k] + K(1-a)\,u[k], \qquad a = e^{-T_s/\tau} $$
+
+      This is what a 10 ms control task "sees". `a` close to 1 means the plant is
+      slow relative to the sample rate.
+
+  - id: B01-L2
+    title: "PI design by pole-zero cancellation"
+    body: |
+      # PI design
+
+      $$ C(s) = K_p \left(1 + \frac{1}{T_i s}\right) = K_p + \frac{K_i}{s}, \quad K_i = K_p / T_i $$
+
+      Choosing `Ti = τ` cancels the plant pole. The open loop becomes
+      `Kp·K / (τ s)` and the closed loop is first-order with time constant
+
+      $$ \tau_{cl} = \frac{\tau}{K_p K} \;\Rightarrow\; K_p = \frac{\tau}{K\,\tau_{cl}} $$
+
+      Caveats a reviewer will raise: the cancellation is only as good as your
+      estimate of τ (load inertia changes it); disturbance rejection follows the
+      *open-loop* pole, so slow plants recover slowly from load steps; and the
+      actuator limits make the linear design invalid during saturation.
+
+  - id: B01-L3
+    title: "Integrator windup and anti-windup"
+    body: |
+      # Windup
+
+      While the actuator is saturated, the error stays large and an unprotected
+      integrator keeps growing. When the error finally changes sign, the
+      integrator must "unwind" before the output leaves the limit → large overshoot
+      and slow recovery.
+
+      **Clamping (conditional integration):** update the integrator only when
+      the unsaturated output is within limits, *or* when the error would drive
+      the output back toward the allowed range.
+
+      **Back-calculation:** feed `(u_sat − u_unsat)/Tt` back into the
+      integrator. Smoother, one more tuning parameter.
+
+      Both are standard; clamping is common in production ECU code because it is
+      simple to verify.
+
+exercises:
+  - id: B01-E1
+    kind: numeric
+    title: "ZOH pole of the motor model"
+    competency: CTL
+    level: beginner
+    points: 10
+    prompt: |
+      Motor model τ = 0.2 s, controller sample time Ts = 10 ms. What is the
+      discrete pole `a` of the ZOH-equivalent plant? (5 decimal places)
+    spec: {answer: 0.951229, abs_tol: 0.00001}
+    hints:
+      - "a = exp(−Ts/τ). Be careful with units: Ts is in milliseconds in the prompt."
+    solution: "a = e^(−0.01/0.2) = e^(−0.05) = **0.951229**."
+
+  - id: B01-E2
+    kind: numeric
+    title: "PI gain for a closed-loop time constant"
+    competency: CTL
+    level: intermediate
+    points: 15
+    prompt: |
+      Motor: K = 50 rpm/V, τ = 0.5 s. You choose `Ti = τ` (pole-zero
+      cancellation) and want a closed-loop time constant of 0.1 s.
+
+      What is `Kp` in V/rpm? (±0.0001)
+    spec: {answer: 0.1, abs_tol: 0.0001, unit: V/rpm}
+    hints:
+      - "With Ti = τ, the open loop is Kp·K/(τ s). Close the loop and read off its time constant."
+      - "τ_cl = τ / (Kp·K)."
+    solution: "Kp = τ / (K·τ_cl) = 0.5 / (50 × 0.1) = **0.1 V/rpm**, Ki = Kp/Ti = 0.2 V/(rpm·s)."
+
+  - id: B01-E3
+    kind: choice
+    title: "Diagnose overshoot after saturation"
+    competency: CTL
+    level: intermediate
+    points: 10
+    prompt: |
+      A motor speed loop is commanded from 0 to 3000 rpm. The voltage command sits
+      at its 48 V limit for 1.2 s, then speed overshoots to 3600 rpm and takes 2 s to
+      settle. Small steps (±100 rpm) look perfect. Most likely root cause?
+    spec:
+      options:
+        - "Kp is too high."
+        - "Integrator windup during saturation; the PI has no anti-windup."
+        - "The sample time is too long."
+        - "Speed-sensor noise."
+      correct: [1]
+    hints:
+      - "Small steps are fine. What is different about the large step?"
+    solution: |
+      **Windup.** Behaviour depends on step size, and the problem appears only
+      after the output was saturated — the signature of integrator windup.
+
+  - id: B01-E4
+    kind: c_function
+    title: "PI controller with clamping anti-windup"
+    competency: CTL
+    level: intermediate
+    points: 30
+    practical: true
+    max_independent_hints: 1
+    prompt: |
+      Implement the 10 ms speed-controller core used in Engineering Task #001.
+
+      ```c
+      typedef struct {
+          float kp; float ki; float ts;
+          float out_min; float out_max;
+          float integ;          /* integrator state, same units as output */
+      } pi_ctrl_t;
+
+      void  pi_init(pi_ctrl_t *c, float kp, float ki, float ts, float out_min, float out_max);
+      float pi_step(pi_ctrl_t *c, float setpoint, float measurement);
+      ```
+
+      Behaviour of `pi_step`:
+      1. `e = setpoint − measurement`, `p = kp·e`, candidate `i' = integ + ki·ts·e`.
+      2. If `p + i'` is within `[out_min, out_max]`, commit `integ = i'`.
+      3. If `p + i' > out_max`, commit `i'` only when `e < 0`; if `< out_min`, only when `e > 0`.
+      4. Return `p + integ` clamped to the limits.
+
+      `pi_init` stores the parameters and resets `integ` to 0. Both functions must
+      do nothing (return 0.0f for `pi_step`) when `c == NULL`.
+      The `pi_ctrl_t` typedef is already provided — do not redefine it.
+    spec:
+      prototypes: |
+        typedef struct {
+            float kp; float ki; float ts;
+            float out_min; float out_max;
+            float integ;
+        } pi_ctrl_t;
+        void  pi_init(pi_ctrl_t *c, float kp, float ki, float ts, float out_min, float out_max);
+        float pi_step(pi_ctrl_t *c, float setpoint, float measurement);
+      starter: |
+        void pi_init(pi_ctrl_t *c, float kp, float ki, float ts, float out_min, float out_max)
+        {
+            /* TODO */
+            (void)c; (void)kp; (void)ki; (void)ts; (void)out_min; (void)out_max;
+        }
+
+        float pi_step(pi_ctrl_t *c, float setpoint, float measurement)
+        {
+            /* TODO */
+            (void)c; (void)setpoint; (void)measurement;
+            return 0.0f;
+        }
+      harness: |
+        int main(void)
+        {
+            pi_ctrl_t c;
+            int k;
+            float u = 0.0f;
+
+            pi_init(&c, 1.0f, 10.0f, 0.01f, -5.0f, 5.0f);
+            CHECK_NEAR(c.integ, 0.0f, 1e-6, "init clears integrator");
+            CHECK_NEAR(pi_step(&c, 1.0f, 0.0f), 1.1f, 1e-5, "first step P + I");
+
+            pi_init(&c, 1.0f, 10.0f, 0.01f, -5.0f, 5.0f);
+            for (k = 0; k < 10; k++) { u = pi_step(&c, 0.5f, 0.0f); }
+            CHECK_NEAR(c.integ, 0.5f, 1e-4, "integrator accumulates");
+            CHECK_NEAR(u, 1.0f, 1e-4, "output after 10 steps");
+
+            pi_init(&c, 1.0f, 10.0f, 0.01f, -5.0f, 5.0f);
+            for (k = 0; k < 100; k++) { u = pi_step(&c, 100.0f, 0.0f); }
+            CHECK_NEAR(u, 5.0f, 1e-6, "upper saturation");
+            CHECK_NEAR(c.integ, 0.0f, 1e-6, "no windup at upper limit");
+            CHECK_NEAR(pi_step(&c, 0.0f, 0.0f), 0.0f, 1e-6, "immediate recovery after saturation");
+
+            pi_init(&c, 1.0f, 10.0f, 0.01f, -5.0f, 5.0f);
+            for (k = 0; k < 100; k++) { u = pi_step(&c, -100.0f, 0.0f); }
+            CHECK_NEAR(u, -5.0f, 1e-6, "lower saturation");
+            CHECK_NEAR(c.integ, 0.0f, 1e-6, "no windup at lower limit");
+
+            pi_init(&c, 10.0f, 1.0f, 0.01f, -5.0f, 5.0f);
+            c.integ = 7.0f;
+            u = pi_step(&c, 0.0f, 0.1f);
+            CHECK_NEAR(u, 5.0f, 1e-6, "still saturated while unwinding");
+            CHECK_NEAR(c.integ, 6.999f, 1e-4, "integrator unwinds when error opposes saturation");
+
+            pi_init(&c, 1.0f, 10.0f, 0.01f, -5.0f, 5.0f);
+            CHECK_NEAR(pi_step(NULL, 1.0f, 0.0f), 0.0f, 1e-9, "NULL pointer safe");
+            pi_init(NULL, 1.0f, 1.0f, 0.01f, -1.0f, 1.0f);
+            CHECK(1, "pi_init(NULL) did not crash");
+            return ECSIM_DONE();
+        }
+      reference: |
+        void pi_init(pi_ctrl_t *c, float kp, float ki, float ts, float out_min, float out_max)
+        {
+            if (c != NULL)
+            {
+                c->kp = kp; c->ki = ki; c->ts = ts;
+                c->out_min = out_min; c->out_max = out_max;
+                c->integ = 0.0f;
+            }
+        }
+
+        float pi_step(pi_ctrl_t *c, float setpoint, float measurement)
+        {
+            float u = 0.0f;
+            if (c != NULL)
+            {
+                float e = setpoint - measurement;
+                float p = c->kp * e;
+                float i_new = c->integ + (c->ki * c->ts * e);
+                float u_unsat = p + i_new;
+                if (u_unsat > c->out_max)
+                {
+                    if (e < 0.0f) { c->integ = i_new; }
+                }
+                else if (u_unsat < c->out_min)
+                {
+                    if (e > 0.0f) { c->integ = i_new; }
+                }
+                else
+                {
+                    c->integ = i_new;
+                }
+                u = p + c->integ;
+                if (u > c->out_max) { u = c->out_max; }
+                if (u < c->out_min) { u = c->out_min; }
+            }
+            return u;
+        }
+      mutants:
+        - |
+          void pi_init(pi_ctrl_t *c, float kp, float ki, float ts, float out_min, float out_max)
+          {
+              if (c != NULL) { c->kp = kp; c->ki = ki; c->ts = ts; c->out_min = out_min; c->out_max = out_max; c->integ = 0.0f; }
+          }
+          float pi_step(pi_ctrl_t *c, float setpoint, float measurement)
+          {
+              float e; float u;
+              if (c == NULL) { return 0.0f; }
+              e = setpoint - measurement;
+              c->integ += c->ki * c->ts * e;
+              u = c->kp * e + c->integ;
+              if (u > c->out_max) { u = c->out_max; }
+              if (u < c->out_min) { u = c->out_min; }
+              return u;
+          }
+    hints:
+      - "Compute the candidate integrator value first, but don't store it until you know the output limits allow it."
+      - "Three cases: above max, below min, within range. In the saturated cases the sign of e decides."
+      - "Clamp the final output after deciding about the integrator; guard every pointer dereference."
+    solution: |
+      See the reference implementation: candidate integrator → conditional commit
+      based on saturation direction and error sign → clamp. Notice that the test
+      "immediate recovery after saturation" is exactly the field symptom in B01-E3.

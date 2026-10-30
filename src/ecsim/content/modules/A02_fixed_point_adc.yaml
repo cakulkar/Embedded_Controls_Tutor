@@ -1,0 +1,212 @@
+id: A02
+department: A
+title: "Fixed-point arithmetic and ADC scaling"
+ordinal: 2
+version: "1"
+
+lessons:
+  - id: A02-L1
+    title: "Q-format fixed point"
+    body: |
+      # Q-format
+
+      A **Qm.n** number stores a real value `x` as the integer `round(x · 2^n)`.
+      Q15 (`int16_t`, n = 15) covers [-1, 1 − 2⁻¹⁵] with resolution 2⁻¹⁵ ≈ 3.05e-5.
+
+      | Real | Q15 integer |
+      |---|---|
+      | 0.5 | 16384 |
+      | −1.0 | −32768 |
+      | 1.0 | not representable (saturates to 32767) |
+
+      ### Multiplication
+      `Q15 × Q15 = Q30` in a 32-bit product. To return to Q15, shift right by 15.
+      Production code also:
+
+      1. **Rounds** — add `2^14` before shifting (round half up) to remove the
+         negative bias of truncation.
+      2. **Saturates** — `−1 × −1 = +1` does not fit in Q15. Without saturation the
+         result wraps to −1, which in a controller is a sign flip: a classic
+         field defect.
+      3. Avoids **implementation-defined** behaviour: in C99, right-shifting a
+         negative signed integer is implementation-defined (MISRA C:2012 flags
+         it). Most compilers implement an arithmetic shift, but portable code
+         either documents the assumption or uses a formulation that does not
+         depend on it.
+
+      Why still care on an FPU-equipped MCU? Many ECUs run legacy or
+      code-generated fixed-point software, DSP-like inner loops, and cores without
+      a double-precision FPU; calibration data in A2L files is often scaled integers.
+
+  - id: A02-L2
+    title: "From ADC counts to engineering units"
+    body: |
+      # ADC scaling chain
+
+      ```
+      physical quantity → sensor → voltage → ADC count → software value
+      ```
+
+      For an N-bit ADC with reference `Vref`, a common convention is
+      `V = count · Vref / 2^N` (check your MCU manual: some use `2^N − 1`).
+
+      Automotive sensors are frequently **ratiometric** and use a reduced output
+      range, e.g. 0.5 V … 4.5 V for a 5 V supply. The bands below 0.5 V and above
+      4.5 V are not "valid low/high values" — they are **diagnostic ranges** used
+      to detect open circuit, short to ground and short to battery. A robust
+      software chain:
+
+      1. Convert counts to volts.
+      2. Range-check the voltage (out-of-range → debounce → DTC → substitute value).
+      3. Convert to engineering units with the sensor transfer function.
+      4. Filter / plausibility-check against other signals.
+
+exercises:
+  - id: A02-E1
+    kind: numeric
+    title: "Encode a value in Q15"
+    competency: EMB
+    level: beginner
+    points: 10
+    prompt: "What is the Q15 integer representation of −0.375?"
+    spec: {answer: -12288, abs_tol: 0, integer: true}
+    hints:
+      - "Q15 means multiply by 2^15 = 32768 and round."
+    solution: "−0.375 × 32768 = **−12288**."
+
+  - id: A02-E2
+    kind: numeric
+    title: "MAP sensor scaling"
+    competency: VEH
+    level: beginner
+    points: 15
+    prompt: |
+      A manifold absolute pressure sensor outputs 0.5 V at 0 kPa and 4.5 V at
+      250 kPa (linear). It is read by a 12-bit ADC with Vref = 5.000 V and
+      `V = count · Vref / 4096`.
+
+      The ADC reads **2458** counts. What is the pressure in kPa? (±0.1 kPa)
+    spec: {answer: 156.28, abs_tol: 0.1, unit: kPa}
+    hints:
+      - "First find the voltage from the count."
+      - "Then map 0.5–4.5 V linearly onto 0–250 kPa: p = (V − 0.5) / 4.0 × 250."
+    solution: |
+      V = 2458 × 5 / 4096 = 3.0005 V → p = (3.0005 − 0.5) / 4 × 250 = **156.28 kPa**.
+
+  - id: A02-E3
+    kind: choice
+    title: "Sensor voltage of 4.85 V"
+    competency: FUS
+    level: beginner
+    points: 10
+    prompt: |
+      The same MAP sensor (valid output 0.5–4.5 V) reports 4.85 V continuously.
+      What should the software do?
+    spec:
+      options:
+        - "Clamp to 250 kPa and continue; it is just a high reading."
+        - "Treat it as a signal-range-high fault: debounce, set a DTC, and use a defined substitute value / degraded mode."
+        - "Reset the ECU so the ADC re-initialises."
+        - "Extrapolate linearly to 271.9 kPa."
+      correct: [1]
+    hints:
+      - "What could physically cause a 0.5–4.5 V sensor to output above 4.5 V?"
+    solution: |
+      **Option 2.** Above 4.5 V is the diagnostic band (typically short to supply
+      or open ground). Using the value — clamped or extrapolated — feeds a wrong
+      measurement into fuelling/boost control.
+
+  - id: A02-E4
+    kind: c_function
+    title: "Q15 multiply with rounding and saturation"
+    competency: EMB
+    level: intermediate
+    points: 25
+    practical: true
+    prompt: |
+      Implement
+
+      ```c
+      int16_t q15_mul(int16_t a, int16_t b);
+      ```
+
+      * Compute the Q15 product of `a` and `b`.
+      * Round to nearest, ties toward +∞ (i.e. add 2¹⁴ to the Q30 product, then take
+        the floor of the division by 2¹⁵).
+      * Saturate to [−32768, 32767].
+      * Bonus (reviewed, not graded): avoid relying on right-shift of negative values.
+    spec:
+      prototypes: |
+        int16_t q15_mul(int16_t a, int16_t b);
+      starter: |
+        int16_t q15_mul(int16_t a, int16_t b)
+        {
+            /* TODO */
+            (void)a; (void)b;
+            return 0;
+        }
+      harness: |
+        int main(void)
+        {
+            CHECK_EQ_I(q15_mul(16384, 16384), 8192, "0.5 * 0.5");
+            CHECK_EQ_I(q15_mul(-16384, 16384), -8192, "-0.5 * 0.5");
+            CHECK_EQ_I(q15_mul(-32768, -32768), 32767, "-1 * -1 saturates");
+            CHECK_EQ_I(q15_mul(32767, 32767), 32766, "max * max");
+            CHECK_EQ_I(q15_mul(-32768, 32767), -32767, "-1 * max");
+            CHECK_EQ_I(q15_mul(1, 16384), 1, "tie rounds up");
+            CHECK_EQ_I(q15_mul(1, 16383), 0, "below half rounds down");
+            CHECK_EQ_I(q15_mul(-1, 16384), 0, "negative tie rounds toward +inf");
+            CHECK_EQ_I(q15_mul(-1, 16385), -1, "negative above half");
+            CHECK_EQ_I(q15_mul(0, -32768), 0, "zero");
+            CHECK_EQ_I(q15_mul(-32768, 16384), -16384, "-1 * 0.5");
+            return ECSIM_DONE();
+        }
+      reference: |
+        int16_t q15_mul(int16_t a, int16_t b)
+        {
+            int32_t p = ((int32_t)a * (int32_t)b) + 0x4000;
+            int32_t q;
+            if (p >= 0)
+            {
+                q = p >> 15;
+            }
+            else
+            {
+                q = -((-p + 0x7FFF) >> 15);   /* floor division without signed shift */
+            }
+            if (q > 32767)
+            {
+                q = 32767;
+            }
+            else if (q < -32768)
+            {
+                q = -32768;
+            }
+            else
+            {
+                /* in range */
+            }
+            return (int16_t)q;
+        }
+      mutants:
+        - |
+          int16_t q15_mul(int16_t a, int16_t b)
+          {
+              int32_t p = ((int32_t)a * (int32_t)b) + 0x4000;
+              return (int16_t)(p >> 15);
+          }
+        - |
+          int16_t q15_mul(int16_t a, int16_t b)
+          {
+              int32_t q = ((int32_t)a * (int32_t)b) >> 15;
+              if (q > 32767) { q = 32767; }
+              return (int16_t)q;
+          }
+    hints:
+      - "Promote to int32_t before multiplying: the Q30 product of two int16_t values always fits."
+      - "Which single input pair produces a result that does not fit in Q15?"
+      - "Add 0x4000, divide by 32768 rounding toward −∞, then clamp to the int16_t range."
+    solution: |
+      See the reference: promote, add 2¹⁴, floor-divide by 2¹⁵ (handled separately
+      for negative values to avoid implementation-defined shifts), clamp.
+      Only (−32768) × (−32768) overflows.

@@ -1,0 +1,45 @@
+# ECSim curriculum definition. Weights must sum to 1.0 (validated at load + in tests).
+levels: [beginner, intermediate, advanced, expert]
+
+competencies:
+  - {code: EMB, title: "Embedded C and microcontrollers", weight: 0.15}
+  - {code: CTL, title: "Control theory and algorithms", weight: 0.15}
+  - {code: MBD, title: "Model-based development", weight: 0.10}
+  - {code: VEH, title: "Vehicle systems knowledge", weight: 0.15}
+  - {code: COM, title: "ECU architecture and communication", weight: 0.10}
+  - {code: ARC, title: "AUTOSAR and software architecture", weight: 0.10}
+  - {code: FUS, title: "Functional safety", weight: 0.10}
+  - {code: TST, title: "Testing and validation", weight: 0.10}
+  - {code: DOC, title: "Documentation and engineering reviews", weight: 0.05}
+
+departments:
+  - {code: A, phase: 2,  title: "Embedded systems foundations", description: "C/C++, MCU architecture, peripherals, fixed-point, RTOS, watchdogs, bootloaders."}
+  - {code: B, phase: 3,  title: "Control theory and model-based development", description: "Classical and modern control, discretisation, estimation, LUTs, anti-windup."}
+  - {code: C, phase: 8,  title: "Driveline controls", description: "Transmissions, clutch control, shift quality, torque coordination, AWD."}
+  - {code: D, phase: 8,  title: "Powertrain and engine controls", description: "Gasoline/diesel EMS, boost, aftertreatment, e-motor FOC, hybrids."}
+  - {code: E, phase: 7,  title: "Battery management systems", description: "ECMs, SOC/SOH/SOP, balancing, contactors, precharge, isolation."}
+  - {code: F, phase: 9,  title: "ADAS and autonomous vehicle controls", description: "Sensors, fusion, ACC, AEB, LKA, longitudinal/lateral control, fallbacks."}
+  - {code: G, phase: 9,  title: "Body controls", description: "BCM functions, lighting, HVAC, wipers, sleep/wake, DTCs."}
+  - {code: H, phase: 10, title: "Agricultural and construction equipment controls", description: "PTO, hitch, hydraulics, sprayers, ISOBUS, excavators, load sensing, anti-stall."}
+  - {code: I, phase: 6,  title: "Automotive communication and diagnostics", description: "CAN/CAN FD/LIN/Ethernet, J1939, ISOBUS, UDS, OBD-II, DBC/A2L/XCP."}
+  - {code: J, phase: 11, title: "AUTOSAR and software architecture", description: "Classic/Adaptive AUTOSAR, RTE, BSW, ports, ARXML, integration."}
+  - {code: K, phase: 11, title: "Functional safety and cybersecurity", description: "ISO 26262 concepts, HARA, FMEA/FTA, ISO 25119/19014 applicability, ISO/SAE 21434 fundamentals."}
+  - {code: L, phase: 12, title: "Calibration, testing and validation", description: "MIL/SIL/PIL/HIL, test design, coverage, calibration, root cause."}
+  - {code: M, phase: 12, title: "Engineering tools and workflows", description: "Open-source substitutes for industry tools and their limits."}
+  - {code: N, phase: 12, title: "Industry Readiness Bridge", description: "Translate solutions into Simulink/Stateflow/Embedded Coder/CANape/INCA/DOORS/dSPACE concepts."}
+  - {code: P, phase: 14, title: "Career preparation and interview simulator", description: "Technical interviews with follow-ups and honest project narratives."}
+
+# Track requirement string order: EMB CTL MBD VEH COM ARC FUS TST DOC
+# b=beginner i=intermediate a=advanced e=expert -=none
+tracks:
+  - {code: JR_EMB_CTL, title: "Junior Embedded Controls Engineer",       req: "i b b b b b b b b"}
+  - {code: EMB_SW,     title: "Embedded Software Engineer",              req: "a b b b i i b i b"}
+  - {code: CTL_ALGO,   title: "Controls Algorithm Engineer",             req: "i a a i b b b i b"}
+  - {code: BMS_CTL,    title: "BMS Controls Engineer",                   req: "i a i a i b i i b"}
+  - {code: PT_CTL,     title: "Powertrain Controls Engineer",            req: "i a i a i b i i b"}
+  - {code: DL_CTL,     title: "Driveline Controls Engineer",             req: "i a i a i b i i b"}
+  - {code: ADAS_CTL,   title: "ADAS Controls Engineer",                  req: "i a i a i b a i b"}
+  - {code: AG_CTL,     title: "Agricultural Controls Engineer",          req: "i i i a a b i i b"}
+  - {code: CE_CTL,     title: "Construction Equipment Controls Engineer", req: "i i i a a b i i b"}
+  - {code: SR_CTL,     title: "Senior Controls Engineer",                req: "a e a a a i a a a"}
+  - {code: SYS_FUS,    title: "Systems and Functional Safety Engineer",  req: "i i b a i i e a a"}
