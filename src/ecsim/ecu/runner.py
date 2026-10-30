@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ecsim.ecu.scenarios import ScenarioResult, run_scenario
+from ecsim.ecu.vecu import AppCrash
 
 MARK = "ECSIM_JSON:"
+EXIT_APP_CRASH = 70
 
 
 @dataclass
@@ -35,7 +37,8 @@ def run_isolated(lib: Path, profile: str, scenario: str, seed: int = 1, timeout_
     for line in p.stdout.splitlines():
         if line.startswith(MARK):
             return RunOutcome(True, ScenarioResult.from_dict(json.loads(line[len(MARK):])))
-    if p.returncode < 0 or p.returncode > 128:   # signal (POSIX) or NTSTATUS e.g. 0xC0000005 (Windows)
+    if p.returncode == EXIT_APP_CRASH or p.returncode < 0 or p.returncode > 128:
+        # EXIT_APP_CRASH: fault caught and located (Windows); <0 signal (POSIX); >128 NTSTATUS
         return RunOutcome(False, None, f"The application crashed (exit code {p.returncode}; e.g. segmentation "
                                        "fault from an invalid pointer or out-of-bounds array access).\n"
                                        + p.stderr[-2000:])
@@ -57,7 +60,11 @@ def main(argv: list[str] | None = None) -> int:
     a = argv if argv is not None else sys.argv[1:]
     lib, profile, scenario = Path(a[0]), a[1], a[2]
     seed = int(a[3]) if len(a) > 3 else 1
-    res = run_scenario(lib, scenario, profile, seed)
+    try:
+        res = run_scenario(lib, scenario, profile, seed)
+    except AppCrash as exc:
+        sys.stderr.write(f"Application crash: {exc}\n")
+        return EXIT_APP_CRASH
     sys.stdout.write(MARK + json.dumps(res.to_dict()) + "\n")
     sys.stdout.flush()
     return 0

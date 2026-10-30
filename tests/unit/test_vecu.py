@@ -6,7 +6,7 @@ import pytest
 
 from ecsim.ecu.build import build_app
 from ecsim.ecu.profiles import PROFILES, get_profile
-from ecsim.ecu.vecu import RESET_SOFTWARE, RESET_WATCHDOG, AdcFault, VirtualEcu
+from ecsim.ecu.vecu import RESET_SOFTWARE, RESET_WATCHDOG, AdcFault, AppCrash, VirtualEcu
 from ecsim.plants.dc_motor import DcMotor, DcMotorParams
 
 from conftest import needs_cc
@@ -179,3 +179,17 @@ def test_noise_is_seeded_and_reproducible(tmp_path):
 def test_missing_app_init(tmp_path):
     with pytest.raises(RuntimeError, match="app_init"):
         VirtualEcu(lib(tmp_path, "void task_1ms(void) {}"), CM)
+
+
+@needs_cc
+def test_os_level_fault_reported_with_task_and_time(tmp_path):
+    """Windows ctypes raises OSError on access violations; it must become a located AppCrash."""
+    with VirtualEcu(lib(tmp_path, COUNTER_APP), CM) as ecu:
+        run(ecu, 15)
+        task = next(t for t in ecu.tasks if t.name == "task_10ms")
+
+        def faulting():
+            raise OSError("exception: access violation writing 0x0000000000000000")
+        task.fn = faulting
+        with pytest.raises(AppCrash, match=r"task_10ms\(\) crashed at t=20 ms"):
+            run(ecu, 10)

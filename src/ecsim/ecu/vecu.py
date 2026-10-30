@@ -36,6 +36,10 @@ _COPY_IDS = itertools.count(1)  # unique file per load: Windows locks loaded DLL
 RESET_NAMES = {RESET_POWER_ON: "power-on", RESET_WATCHDOG: "watchdog", RESET_SOFTWARE: "software"}
 
 
+class AppCrash(RuntimeError):
+    """Learner code faulted (e.g. access violation). Raised where the OS lets us catch it (Windows)."""
+
+
 @dataclass
 class AdcFault:
     mode: str            # offset | stuck | open | short_supply | gain
@@ -192,10 +196,16 @@ class VirtualEcu:
         for t in self.tasks:
             t.remaining_us = 0
         self._sample_inputs()
-        self._app_init()
+        self._call("app_init", self._app_init)
         self._collect_dem()
         self._last_service_ms = self.time_ms
         self._first_service = True   # the window does not apply to the first service after boot
+
+    def _call(self, name: str, fn) -> None:
+        try:
+            fn()
+        except OSError as exc:   # ctypes turns Windows SEH faults into OSError
+            raise AppCrash(f"{name}() crashed at t={self.time_ms} ms: {exc}") from None
 
     def _reset(self, reason: int, detail: str) -> None:
         self.resets.append(ResetEvent(self.time_ms, reason, detail))
@@ -302,7 +312,7 @@ class VirtualEcu:
 
         # Functional execution of accepted activations, priority order.
         for t in to_run:
-            t.fn()
+            self._call(t.name, t.fn)
             if self.io.sw_reset_request:
                 break
         self._collect_dem()
