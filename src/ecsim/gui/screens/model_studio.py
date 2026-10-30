@@ -324,6 +324,7 @@ class ModelStudioScreen(QWidget):
         self.tabs.addTab(self.messages, "Messages")
         self.tabs.addTab(self._build_sim_panel(), "Simulate")
         self.tabs.addTab(self._build_grade_panel(), "Grade against exercise")
+        self.tabs.addTab(self._build_code_panel(), "Code / SIL / vECU")
         center.addWidget(self.tabs)
         center.setSizes([560, 260])
         split.addWidget(center)
@@ -398,6 +399,116 @@ class ModelStudioScreen(QWidget):
         self.grade_out = QPlainTextEdit(); self.grade_out.setReadOnly(True); self.grade_out.setFont(mono_font())
         v.addWidget(self.grade_out)
         return w
+
+    def _build_code_panel(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        row = QHBoxLayout()
+        self.code_dtype = QComboBox()
+        self.code_dtype.addItems(["double", "single"])
+        row.addWidget(QLabel("Precision"))
+        row.addWidget(self.code_dtype)
+        for label, fn in (("Generate C", self.generate_code), ("Save code…", self.save_code),
+                          ("Back-to-back vs exercise tests", self.run_b2b)):
+            b = QPushButton(label)
+            b.setObjectName("secondary" if "Save" in label else "")
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        self.deploy_profile = QComboBox()
+        from ecsim.ecu.profiles import PROFILES
+        for pcode, prof in PROFILES.items():
+            self.deploy_profile.addItem(prof.title, pcode)
+        row.addWidget(self.deploy_profile)
+        dep = QPushButton("Deploy to virtual ECU")
+        dep.clicked.connect(self.deploy)
+        row.addWidget(dep)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.code_view = QPlainTextEdit(); self.code_view.setReadOnly(True); self.code_view.setFont(mono_font())
+        v.addWidget(self.code_view)
+        self.generated = None
+        return w
+
+    def generate_code(self) -> bool:
+        from ecsim.model.codegen import generate_c
+        doc = self._commit_to_root()
+        try:
+            self.generated = generate_c(doc.model, self.code_dtype.currentText())
+        except ModelError as exc:
+            self.messages.setPlainText(f"✗ {exc}")
+            self.tabs.setCurrentIndex(0)
+            return False
+        g = self.generated
+        self.code_view.setPlainText(f"/* ===== {g.name}.h ===== */\n{g.header}\n/* ===== {g.name}.c ===== */\n{g.source}")
+        self.tabs.setCurrentIndex(3)
+        return True
+
+    def save_code(self, folder: str | None = None) -> bool:
+        if not self.generated and not self.generate_code():
+            return False
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, "Save generated code to folder")
+            if not folder:
+                return False
+        for name, text in self.generated.files.items():
+            Path(folder, name).write_text(text, encoding="utf-8")
+        self.messages.setPlainText(f"Wrote {', '.join(self.generated.files)} to {folder}")
+        return True
+
+    def run_b2b(self) -> bool:
+        from ecsim.model.sil import back_to_back
+        doc = self._commit_to_root()
+        ex_id = self.grade_ex.currentData()
+        if not ex_id:
+            return False
+        spec = self.ctx.catalog.exercise(ex_id).spec
+        dtype = self.code_dtype.currentText()
+        tol = float(spec.get("b2b", {}).get("abs", 1e-9 if dtype == "double" else 1e-3))
+        try:
+            rep = back_to_back(doc.to_json(), spec, dtype, tol)
+        except ModelError as exc:
+            self.code_view.setPlainText(f"✗ {exc}")
+            return False
+        errs = rep.mil.errors + rep.sil.errors
+        lines = [f"Back-to-back: model (MIL, double) vs generated C (SIL, {dtype}), tolerance {tol:g}", ""]
+        lines += [f"✗ {e}" for e in errs]
+        for cmp in rep.comparisons:
+            lines.append(f"{'ok ' if cmp.passed else 'FAIL'} [{cmp.test}] {cmp.signal}: max |MIL − SIL| = {cmp.max_abs:.4g}"
+                         + ("" if cmp.passed else f" at t = {cmp.at_t:.3f} s"))
+        lines.append("")
+        lines.append("EQUIVALENT within tolerance" if rep.equivalent and not errs else "NOT equivalent: investigate numerics")
+        self.code_view.setPlainText("\n".join(lines))
+        self.tabs.setCurrentIndex(3)
+        self.last_b2b = rep
+        return rep.equivalent and not errs
+
+    def deploy(self) -> bool:
+        from ecsim.model.deploy import deploy_and_run
+        doc = self._commit_to_root()
+        try:
+            build, res = deploy_and_run(doc.model, self.deploy_profile.currentData(), dtype=self.code_dtype.currentText())
+        except ModelError as exc:
+            self.code_view.setPlainText(f"✗ {exc}")
+            self.tabs.setCurrentIndex(3)
+            return False
+        if not build.ok:
+            self.code_view.setPlainText(build.log)
+            return False
+        lines = [f"Generated code + integration wrapper deployed to {self.deploy_profile.currentText()}:", ""]
+        ok = True
+        for sc, out in res.items():
+            if not out.ok:
+                lines.append(f"✗ {sc}: {out.error}")
+                ok = False
+                continue
+            r = out.result
+            ok &= r.passed
+            lines.append(f"{'✓' if r.passed else '✗'} {sc}: CPU load {r.cpu_load:.1%}, resets {len(r.resets)}")
+            lines += [f"    {'ok ' if c.passed else 'FAIL'} {c.name}: {c.detail}" for c in r.checks]
+        lines.append("\nOpen the Virtual ECU Lab to see the signals of hand-written firmware; this run uses the generated code.")
+        self.code_view.setPlainText("\n".join(lines))
+        self.tabs.setCurrentIndex(3)
+        return ok
 
     # ---- document binding --------------------------------------------------------
     def _bind(self, doc: ModelDocument) -> None:

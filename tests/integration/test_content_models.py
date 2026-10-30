@@ -44,3 +44,29 @@ def test_backend_parity(ex, tmp_path):
         assert [(o.name, o.passed, o.detail) for o in a.outcomes] == [(o.name, o.passed, o.detail) for o in b.outcomes]
     finally:
         sb.set_session(None)
+
+
+SIL_EXS = [e for e in load_catalog(CONTENT_DIR).all_exercises() if e.kind == "model_sil"]
+
+
+@pytest.mark.parametrize("ex", SIL_EXS, ids=lambda e: e.id)
+def test_sil_exercise_quality_bar(ex):
+    from ecsim.learning.graders import ModelSilGrader
+    g = ModelSilGrader()
+    assert g.grade(ex.spec, ex.spec["reference"]).passed
+    assert not g.grade(ex.spec, ex.spec["starter"]).passed
+    for i, m in enumerate(ex.spec["mutants"]):
+        assert not g.grade(ex.spec, m).passed, i
+    # The lesson only works if some mutants pass in MIL and fail only on the generated code.
+    for i in ex.spec.get("mil_passing_mutants", []):
+        assert ModelMilGrader().grade(ex.spec, ex.spec["mutants"][i]).passed, f"mutant {i} should pass MIL"
+
+
+def test_sil_grader_accepts_slx(tmp_path):
+    from ecsim.learning.graders import ModelSilGrader
+    from fakes import write_slx
+    ex = SIL_EXS[0]
+    p = tmp_path / "coulomb_counter.slx"
+    write_slx(json.loads(ex.spec["reference"]), p)
+    r = ModelSilGrader().grade(ex.spec, str(p))
+    assert r.passed and "Simulink model (imported)" in r.feedback

@@ -220,3 +220,14 @@ def test_chart_editing_in_studio(studio):
     good = {"inputs": [], "outputs": ["y"], "initial": "S", "states": [{"name": "S", "entry": "y = 1"}]}
     assert d.set_scxml(to_scxml(good)) and "✓" in d.status.text()
     assert len(d.view.scene().items()) > 2
+
+
+def test_code_tab_generate_b2b_deploy(studio, tmp_path):
+    build_pi(studio)
+    assert studio.generate_code() and "void speed_pi_step" not in studio.code_view.toPlainText()
+    assert "_step(void)" in studio.code_view.toPlainText()
+    assert studio.save_code(str(tmp_path)) and len(list(tmp_path.glob("*.c"))) == 1
+    studio.grade_ex.setCurrentIndex(studio.grade_ex.findData("B02-E4"))
+    assert studio.run_b2b() and "EQUIVALENT" in studio.code_view.toPlainText()
+    studio.code_dtype.setCurrentText("single")
+    assert studio.deploy() and "motor_load_step" in studio.code_view.toPlainText()

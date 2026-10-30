@@ -202,3 +202,12 @@ def test_cli_model_check_and_slx_submit(tmp_path, capsys, standin):
                                "blocks": [{"id": "g", "type": "Gain"}], "lines": []}), encoding="utf-8")
     assert main(["--home", str(tmp_path / "h"), "model", "check", str(bad)]) == 2
     assert "not connected" in capsys.readouterr().out
+
+
+def test_cli_codegen_and_deploy(tmp_path, capsys):
+    f = tmp_path / "pi.json"
+    f.write_text(SPEC["reference"], encoding="utf-8")
+    assert main(["--home", str(tmp_path / "h"), "model", "codegen", str(f), "--dtype", "single", "--out", str(tmp_path / "gen")]) == 0
+    assert (tmp_path / "gen" / "speed_pi.c").exists() and "typedef float" in (tmp_path / "gen" / "speed_pi.h").read_text(encoding="utf-8")
+    assert main(["--home", str(tmp_path / "h"), "model", "deploy", str(f), "--scenario", "motor_load_step"]) == 0
+    assert "PASS  generated code" in capsys.readouterr().out

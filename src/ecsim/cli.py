@@ -220,6 +220,44 @@ def cmd_model_check(ctx: AppContext, a) -> int:
     return 0
 
 
+def cmd_model_codegen(ctx: AppContext, a) -> int:
+    from ecsim.model import ModelError
+    from ecsim.model.codegen import generate_c
+    try:
+        g = generate_c(Path(a.file).read_text(encoding="utf-8"), a.dtype)
+    except ModelError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name, text in g.files.items():
+        (out / name).write_text(text, encoding="utf-8")
+        print(f"wrote {out / name}")
+    return 0
+
+
+def cmd_model_deploy(ctx: AppContext, a) -> int:
+    from ecsim.model import ModelError
+    from ecsim.model.deploy import deploy_and_run
+    try:
+        b, res = deploy_and_run(Path(a.file).read_text(encoding="utf-8"), a.profile, [a.scenario], a.dtype)
+    except ModelError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    if not b.ok:
+        print(b.log)
+        return 2
+    out = res[a.scenario]
+    if not out.ok:
+        print(out.error)
+        return 2
+    r = out.result
+    print(f"{'PASS' if r.passed else 'FAIL'}  generated code on {r.profile}, {r.scenario}, CPU load {r.cpu_load:.1%}")
+    for c in r.checks:
+        print(f"  {'ok ' if c.passed else 'FAIL'} {c.name}: {c.detail}")
+    return 0 if r.passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ecsim", description="Embedded Controls Engineer Job Simulator (offline)")
     p.add_argument("--home", help="data directory (default $ECSIM_HOME or ~/.ecsim)")
@@ -243,6 +281,13 @@ def build_parser() -> argparse.ArgumentParser:
     mdl = sub.add_parser("model", help="model-based development tools").add_subparsers(dest="model_cmd", required=True)
     s = mdl.add_parser("check", help="compile an ECSim model: interface, sorted order, rates, warnings")
     s.add_argument("file"); s.set_defaults(fn=cmd_model_check)
+    s = mdl.add_parser("codegen", help="generate C (Embedded Coder-style) from an ECSim model")
+    s.add_argument("file"); s.add_argument("--dtype", choices=["double", "single"], default="double")
+    s.add_argument("--out", default="generated"); s.set_defaults(fn=cmd_model_codegen)
+    s = mdl.add_parser("deploy", help="generate code for a speed controller and run it on the virtual ECU")
+    s.add_argument("file"); s.add_argument("--profile", default="CM4_GENERIC")
+    s.add_argument("--scenario", default="motor_nominal"); s.add_argument("--dtype", choices=["double", "single"], default="single")
+    s.set_defaults(fn=cmd_model_deploy)
     ecu = sub.add_parser("ecu", help="virtual ECU lab").add_subparsers(dest="ecu_cmd", required=True)
     ecu.add_parser("profiles", help="list target profiles and scenarios").set_defaults(fn=cmd_ecu_profiles)
     s = ecu.add_parser("run", help="build an application and run one scenario")

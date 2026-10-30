@@ -152,3 +152,18 @@ layout by a test writer, not against files saved by MATLAB. Please import a few 
 
 Not yet: junctions, events, parallel states, `duration()`, and graphical state drawing (the diagram is
 generated from the definition). Real Stateflow charts are graded directly through the Simulink backend.
+
+## Phase 6 — Code generation, SIL, back-to-back — **DONE (2026-10-29)**
+
+| Item | Evidence |
+|---|---|
+| Embedded Coder-style C generator (`m_U`/`m_Y`/`m_DW`, `initialize`/`step`), every block incl. charts, multi-rate, subsystems; `double`/`single` | `test_codegen.py` |
+| Generated code compiles with `-std=c99 -Wall -Wextra -Werror -pedantic` (checked on every SIL build) | all SIL tests |
+| **Bit-exact MIL = SIL in double** for every block type, charts, and every exercise reference model | `test_every_block_is_bit_exact_in_double`, `test_model_exercises_bit_exact_in_double` |
+| SIL backend in the MIL harness; B2B comparison of every signal with tolerance | `sil.py`, `test_sil_exercise_quality_bar` |
+| `model_sil` grader (also accepts `.slx` via import) | `test_sil_grader_accepts_slx` |
+| Model → generated C → integration wrapper → virtual ECU (closed loop, both targets) | `test_deploy_generated_controller_to_virtual_ecu` |
+| Studio "Code / SIL / vECU" tab; CLI `model codegen`, `model deploy` | `test_code_tab_generate_b2b_deploy`, `test_cli_codegen_and_deploy` |
+| Content B04: code structure, float32 numerics, B2B practice; coulomb-counter practical where the naive model passes MIL and fails SIL | `test_sil_exercise_quality_bar` (`mil_passing_mutants`) |
+
+Not generated: fixed-point data types, AUTOSAR RTE wrappers, Simulink Coder file layout/naming options.

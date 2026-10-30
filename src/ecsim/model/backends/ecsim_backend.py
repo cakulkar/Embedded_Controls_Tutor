@@ -20,8 +20,12 @@ class EcsimBackend:
     def release(self, c: Compiled) -> None:
         pass
 
+    def stepper(self, c: Compiled):
+        """Object with step(list[float]) -> list[float]; SIL overrides this with compiled C."""
+        return Simulator(c)
+
     def run_open_loop(self, c: Compiled, test: dict, step: float) -> TestTrace:
-        sim = Simulator(c)
+        sim = self.stepper(c)
         n = n_samples(float(test["duration"]), step)
         sig = {name: [] for name in c.inport_names + c.outport_names}
         ts = []
@@ -38,7 +42,7 @@ class EcsimBackend:
 
     def run_closed_loop(self, c: Compiled, test: dict, step: float) -> TestTrace:
         """Controller model: inport 1 = measured speed [rpm], outport 1 = voltage command [V]."""
-        sim = Simulator(c)
+        sim = self.stepper(c)
         plant = DiscreteMotor.at(step)
         load = test.get("load_torque", {"const": 0.0})
         n = n_samples(float(test["duration"]), step)

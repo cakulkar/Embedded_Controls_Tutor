@@ -12,7 +12,7 @@ import yaml
 
 LEVELS = ("beginner", "intermediate", "advanced", "expert")
 LEVEL_CODE = {"b": "beginner", "i": "intermediate", "a": "advanced", "e": "expert"}
-KINDS = ("numeric", "choice", "c_function", "ecu_app", "model_mil")
+KINDS = ("numeric", "choice", "c_function", "ecu_app", "model_mil", "model_sil")
 COMPETENCY_ORDER = ("EMB", "CTL", "MBD", "VEH", "COM", "ARC", "FUS", "TST", "DOC")
 
 
@@ -203,7 +203,7 @@ def _validate_spec(kind: str, spec: dict, where: str) -> None:
         unknown = [s for s in spec["scenarios"] if s not in SCENARIOS]
         if unknown:
             raise ContentError(f"{where}: unknown scenarios {unknown}")
-    elif kind == "model_mil":
+    elif kind in ("model_mil", "model_sil"):
         from ecsim.model.blocks import ModelError
         from ecsim.model.core import compile_model
         for k in ("interface", "tests", "starter", "reference"):
