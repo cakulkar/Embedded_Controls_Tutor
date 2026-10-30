@@ -96,6 +96,11 @@ def _window(tr: TestTrace, t0: float | None, t1: float | None) -> list[int]:
     return [i for i, t in enumerate(tr.t) if lo <= t <= hi]
 
 
+def _f(v: float) -> str:
+    """Enough significant digits that small differences on large values stay visible."""
+    return f"{v:.10g}"
+
+
 def evaluate_check(test: str, chk: dict, tr: TestTrace) -> CheckOutcome:
     kind, sig = chk["kind"], chk["signal"]
     if sig not in tr.signals:
@@ -109,10 +114,10 @@ def evaluate_check(test: str, chk: dict, tr: TestTrace) -> CheckOutcome:
         lo, hi = chk.get("min", -math.inf), chk.get("max", math.inf)
         for i in idx:
             if not (lo - 1e-9 <= y[i] <= hi + 1e-9):
-                return CheckOutcome(test, name, False, f"{sig} = {y[i]:.4g} at t = {tr.t[i]:.3f} s "
+                return CheckOutcome(test, name, False, f"{sig} = {_f(y[i])} at t = {tr.t[i]:.3f} s "
                                                        f"(allowed {lo:g} … {hi:g})")
         vals = [y[i] for i in idx]
-        return CheckOutcome(test, name, True, f"{sig} stayed in {min(vals):.4g} … {max(vals):.4g}")
+        return CheckOutcome(test, name, True, f"{sig} stayed in {_f(min(vals))} … {_f(max(vals))}")
     if kind == "near":                         # |y - target| <= tol for all samples in window
         target, tol = float(chk["target"]), float(chk["tol"])
         worst = max(idx, key=lambda i: abs(y[i] - target))
@@ -132,7 +137,7 @@ def evaluate_check(test: str, chk: dict, tr: TestTrace) -> CheckOutcome:
         i = min(range(len(tr.t)), key=lambda k: abs(tr.t[k] - t))
         lo, hi = chk.get("min", -math.inf), chk.get("max", math.inf)
         ok = lo - 1e-9 <= y[i] <= hi + 1e-9
-        return CheckOutcome(test, name, ok, f"{sig}({tr.t[i]:.3f} s) = {y[i]:.4g} (allowed {lo:g} … {hi:g})")
+        return CheckOutcome(test, name, ok, f"{sig}({tr.t[i]:.3f} s) = {_f(y[i])} (allowed {_f(lo)} … {_f(hi)})")
     raise ModelError(f"unknown check kind {kind!r}")
 
 

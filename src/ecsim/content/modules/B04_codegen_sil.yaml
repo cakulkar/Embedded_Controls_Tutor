@@ -1,0 +1,767 @@
+# Generated from verified models; edit freely, then run pytest.
+id: B04
+department: B
+title: Code generation, SIL and back-to-back testing
+ordinal: 4
+version: '1'
+lessons:
+- id: B04-L1
+  title: From model to production code
+  body: |
+    # What a code generator produces
+
+    Embedded Coder and TargetLink differ in detail, but generated code has the same skeleton. ECSim's
+    generator (Studio → *Code / SIL / vECU*, or `ecsim model codegen`) produces it in the Embedded Coder style:
+
+    | Generated item | Purpose |
+    |---|---|
+    | `ExtU_m m_U` | root inport values, written by the integration code before each step |
+    | `ExtY_m m_Y` | root outport values, read after each step |
+    | `DW_m m_DW` | states (Unit Delay, integrators, charts) and held block outputs |
+    | `m_initialize()` | initial conditions, constants |
+    | `m_step()` | one base step: **outputs in sorted order, then state updates** |
+
+    The statement order in `m_step()` *is* the model's sorted execution order. An algebraic loop has no
+    valid order, which is why code generation refuses it.
+
+    ### Code-generation-friendly modelling
+    * Fixed-step discrete solver; sample times as integer multiples of the base rate.
+    * No algebraic loops; explicit rate transitions.
+    * Decide the data type deliberately: `double` (rare on ECUs), `single` (common on MCUs with an FPU), or
+      fixed-point (TargetLink's home ground, and still common on cost-sensitive ECUs).
+
+    ECSim generates C99 without dynamic memory or recursion, which compiles with `-Wall -Wextra -Werror
+    -pedantic`. It does **not** generate fixed-point code or AUTOSAR RTE wrappers. Those are taught as
+    concepts and remain tool-specific skills.
+- id: B04-L2
+  title: 'Numerics: why the code can disagree with the model'
+  body: |
+    # Precision in generated code
+
+    A model simulated in `double` and code compiled in `single` are **different systems**. A float32 has a
+    24-bit mantissa. Near a value *x*, the spacing between representable numbers (one *ulp*) is
+    `2^(floor(log2 x) − 23)`. Near 360 000 that is **0.03125**.
+
+    Add 0.0005 to 360 000 in float32 and the result rounds straight back to 360 000. Each trickle-current
+    increment of a coulomb counter disappears. Over an hour the model says +5 As; the ECU says 0.
+
+    ### Patterns that survive single precision
+    * **Integrate the change, add the offset afterwards.** The integrator state stays small and precise.
+    * **Rebase periodically:** move accumulated whole units into a separate counter.
+    * **Choose units** so typical values sit where float32 (or the fixed-point scaling) has resolution.
+
+    TargetLink users do the same reasoning with fixed-point LSB and offset. The habit, "what is the
+    resolution at the largest value this signal can reach?", is identical.
+- id: B04-L3
+  title: Back-to-back testing (MIL vs SIL)
+  body: |
+    # Back-to-back (B2B) testing
+
+    Run **the same test vectors** on the model (MIL) and on the generated code (SIL, later PIL on the
+    target processor), and compare every output sample against a tolerance.
+
+    * Tolerance follows from precision. Double-precision code generated from a double model should match
+      **bit-exactly**: ECSim's generator does, for every block type. Single-precision code needs a
+      tolerance justified by the signal's range and resolution.
+    * A B2B difference is not automatically a code defect. Here it is the model that is not robust to the
+      production data type. The fix belongs in the model.
+    * ISO 26262-6 lists back-to-back comparison between model and code among the methods for software
+      unit verification. Consult the standard for the applicable ASIL recommendations.
+
+    ECSim's `model_sil` exercises grade the **generated code** against the requirements, plus the B2B
+    equivalence of every output.
+exercises:
+- id: B04-E1
+  kind: numeric
+  title: Float32 resolution
+  competency: MBD
+  level: intermediate
+  points: 10
+  prompt: |
+    What is the spacing between adjacent float32 values near 360 000 (one ulp)?
+  spec:
+    answer: 0.03125
+    abs_tol: 1.0e-09
+  hints:
+  - Find the power of two just below 360 000; the mantissa has 23 fraction bits.
+  solution: |
+    2^18 = 262 144 ≤ 360 000 < 2^19, so ulp = 2^(18−23) = 2^−5 = **0.03125**.
+- id: B04-E2
+  kind: choice
+  title: MIL passes, SIL fails
+  competency: MBD
+  level: intermediate
+  points: 10
+  prompt: |
+    A model passes all MIL tests. Its single-precision generated code loses exactly the small increments of an accumulator. What should you change?
+  spec:
+    options:
+    - Increase the B2B tolerance until the test passes.
+    - Switch the generated code to double; ECUs always have a double FPU.
+    - Restructure the model so the accumulated quantity stays where float32 has enough resolution (e.g. integrate the change and add the offset afterwards).
+    - Report a bug in the code generator.
+    correct:
+    - 2
+  hints:
+  - Is the generated code wrong, or is the model not robust to the production data type?
+  solution: |
+    **Restructure the model.** The code does exactly what float32 arithmetic does. Raising the tolerance hides a real field defect, and double is often unavailable or too slow on the target.
+- id: B04-E3
+  kind: choice
+  title: Unit Delay in generated code
+  competency: MBD
+  level: beginner
+  points: 10
+  prompt: |
+    How does a Unit Delay appear in generated step code?
+  spec:
+    options:
+    - As a local variable recomputed every step.
+    - Its output is read from the state (DW) in the outputs section, and the state is overwritten with the input in the update section.
+    - As a call to a delay() function.
+    - It disappears; delays are only needed in simulation.
+    correct:
+    - 1
+  hints:
+  - 'Remember: outputs first, then updates.'
+  solution: |
+    **Read state in outputs, write state in updates.** This is why a Unit Delay breaks algebraic loops: its output does not depend on the current input.
+- id: B04-E4
+  kind: model_sil
+  title: Coulomb counter that survives single precision (SIL)
+  competency: MBD
+  level: advanced
+  points: 40
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    Model a **coulomb counter** for a battery pack. It will be generated as **single-precision C** and
+    graded on the generated code (SIL), plus MIL vs SIL back-to-back.
+
+    **Interface**, fixed step **0.1 s**: Inport 1 `current_A` (positive = charging), Outport 1 `charge_As`.
+
+    | ID | Requirement |
+    |---|---|
+    | REQ-C4 | `charge_As` starts at the pack's 360 000 As |
+    | REQ-C1 | Counts a 5 mA trickle charge: +5 As after 1000 s (± 0.05 As) |
+    | REQ-C2 | +5000 As after 100 s at 50 A (± 0.5 As) |
+    | REQ-C3 | −2000 As after 100 s at −20 A (± 0.5 As) |
+    | B2B | Generated code within 0.05 As of the model on every test |
+
+    Tip: the obvious one-integrator model passes in MIL. Try it in the Studio (*Code / SIL / vECU →
+    Back-to-back*, single precision) before you submit.
+  spec:
+    interface:
+      inports:
+      - current_A
+      outports:
+      - charge_As
+      step: 0.1
+    tests:
+    - name: T1 trickle charge 5 mA for 1000 s
+      type: open_loop
+      duration: 1000.0
+      inputs:
+        current_A:
+          const: 0.005
+      checks:
+      - name: 'REQ-C1 counts a 5 mA trickle: 360005 ± 0.05 As at 1000 s'
+        kind: at
+        signal: charge_As
+        t: 1000.0
+        min: 360004.95
+        max: 360005.05
+    - name: T2 charge 50 A for 100 s
+      type: open_loop
+      duration: 100.0
+      inputs:
+        current_A:
+          const: 50
+      checks:
+      - name: REQ-C2 365000 ± 0.5 As at 100 s
+        kind: at
+        signal: charge_As
+        t: 100.0
+        min: 364999.5
+        max: 365000.5
+    - name: T3 discharge 20 A for 100 s
+      type: open_loop
+      duration: 100.0
+      inputs:
+        current_A:
+          const: -20
+      checks:
+      - name: REQ-C3 358000 ± 0.5 As at 100 s
+        kind: at
+        signal: charge_As
+        t: 100.0
+        min: 357999.5
+        max: 358000.5
+      - name: REQ-C4 starts at the pack's 360000 As
+        kind: at
+        signal: charge_As
+        t: 0.0
+        min: 360000
+        max: 360000
+    dtype: single
+    b2b:
+      abs: 0.05
+    starter: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "todo",
+            "type": "Constant",
+            "params": {
+              "value": 0
+            },
+            "pos": [
+              300,
+              60
+            ]
+          },
+          {
+            "id": "unused",
+            "type": "Terminator",
+            "pos": [
+              160,
+              160
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "todo:1",
+            "dst": "charge_As:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "unused:1"
+          }
+        ]
+      }
+    reference: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "dQ",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 1,
+              "initial": 0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "Q0",
+            "type": "Constant",
+            "params": {
+              "value": 360000
+            },
+            "pos": [
+              160,
+              160
+            ]
+          },
+          {
+            "id": "total",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              340,
+              60
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "current_A:1",
+            "dst": "dQ:1"
+          },
+          {
+            "src": "dQ:1",
+            "dst": "total:1"
+          },
+          {
+            "src": "Q0:1",
+            "dst": "total:2"
+          },
+          {
+            "src": "total:1",
+            "dst": "charge_As:1"
+          }
+        ]
+      }
+    mutants:
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "Q",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 1,
+              "initial": 360000
+            },
+            "pos": [
+              260,
+              60
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "current_A:1",
+            "dst": "Q:1"
+          },
+          {
+            "src": "Q:1",
+            "dst": "charge_As:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "Q_Ah",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0002777777777777778,
+              "initial": 100
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "toAs",
+            "type": "Gain",
+            "params": {
+              "gain": 3600
+            },
+            "pos": [
+              340,
+              60
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "current_A:1",
+            "dst": "Q_Ah:1"
+          },
+          {
+            "src": "Q_Ah:1",
+            "dst": "toAs:1"
+          },
+          {
+            "src": "toAs:1",
+            "dst": "charge_As:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "dQ",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 1,
+              "initial": 0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "Q0",
+            "type": "Constant",
+            "params": {
+              "value": 0
+            },
+            "pos": [
+              160,
+              160
+            ]
+          },
+          {
+            "id": "total",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              340,
+              60
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "current_A:1",
+            "dst": "dQ:1"
+          },
+          {
+            "src": "dQ:1",
+            "dst": "total:1"
+          },
+          {
+            "src": "Q0:1",
+            "dst": "total:2"
+          },
+          {
+            "src": "total:1",
+            "dst": "charge_As:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "coulomb_counter",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.1
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              60
+            ]
+          },
+          {
+            "id": "charge_As",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "charge_As"
+            },
+            "pos": [
+              520,
+              60
+            ]
+          },
+          {
+            "id": "dQ",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 1,
+              "initial": 0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "Q0",
+            "type": "Constant",
+            "params": {
+              "value": 360000
+            },
+            "pos": [
+              160,
+              160
+            ]
+          },
+          {
+            "id": "total",
+            "type": "Sum",
+            "params": {
+              "signs": "-+"
+            },
+            "pos": [
+              340,
+              60
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "current_A:1",
+            "dst": "dQ:1"
+          },
+          {
+            "src": "dQ:1",
+            "dst": "total:1"
+          },
+          {
+            "src": "Q0:1",
+            "dst": "total:2"
+          },
+          {
+            "src": "total:1",
+            "dst": "charge_As:1"
+          }
+        ]
+      }
+    mil_passing_mutants:
+    - 0
+    - 1
+  hints:
+  - Where does the integrator state live numerically when its initial condition is 360 000?
+  - Integrate the change in charge from 0, then add the 360 000 As offset after the integrator.
+  solution: |
+    Discrete-Time Integrator (gain 1, initial 0) → Sum(+ +) with Constant 360000 → Outport. The state holds only the change (≤ a few thousand As), where float32 resolves 0.0005 As.
+
+    ```json
+    {
+      "format": "ecsim-model",
+      "version": 1,
+      "name": "coulomb_counter",
+      "solver": {
+        "type": "FixedStepDiscrete",
+        "step": 0.1
+      },
+      "blocks": [
+        {
+          "id": "current_A",
+          "type": "Inport",
+          "params": {
+            "port": 1,
+            "name": "current_A"
+          },
+          "pos": [
+            0,
+            60
+          ]
+        },
+        {
+          "id": "charge_As",
+          "type": "Outport",
+          "params": {
+            "port": 1,
+            "name": "charge_As"
+          },
+          "pos": [
+            520,
+            60
+          ]
+        },
+        {
+          "id": "dQ",
+          "type": "DiscreteIntegrator",
+          "params": {
+            "gain": 1,
+            "initial": 0
+          },
+          "pos": [
+            160,
+            60
+          ]
+        },
+        {
+          "id": "Q0",
+          "type": "Constant",
+          "params": {
+            "value": 360000
+          },
+          "pos": [
+            160,
+            160
+          ]
+        },
+        {
+          "id": "total",
+          "type": "Sum",
+          "params": {
+            "signs": "++"
+          },
+          "pos": [
+            340,
+            60
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "src": "current_A:1",
+          "dst": "dQ:1"
+        },
+        {
+          "src": "dQ:1",
+          "dst": "total:1"
+        },
+        {
+          "src": "Q0:1",
+          "dst": "total:2"
+        },
+        {
+          "src": "total:1",
+          "dst": "charge_As:1"
+        }
+      ]
+    }
+    ```
