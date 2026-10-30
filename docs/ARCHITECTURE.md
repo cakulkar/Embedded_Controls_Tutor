@@ -1,5 +1,5 @@
 # ECSim — Embedded Controls Engineer Job Simulator
-## System Architecture (v0.2, Phase 2)
+## System Architecture (v0.3, Phase 3: model-based development first)
 
 > Status legend used throughout this repo: **[BUILT]** implemented and tested,
 > **[PLANNED Pn]** designed but not implemented, scheduled for roadmap phase *n*.
@@ -40,7 +40,7 @@ across automotive, agricultural and construction domains.
 ├──────────────────────────────────────────────────────────────────────────┤
 │ Engines (pure Python / C, no Qt dependency, unit-testable)               │
 │  learning.engine · learning.graders · competency scoring      [BUILT]    │
-│  model graph + solver + C codegen                             [P4/P5]    │
+│  model engine + MIL + Simulink backend [BUILT P3]; codegen    [P6]       │
 │  virtual ECU: scheduler, CPU-time model, periph, watchdog     [BUILT P2] │
 │  plant library: DC motor [BUILT P2]; more + FMU               [P3/P7-10] │
 │  CAN bus sim, DBC/A2L/ARXML I/O, UDS server                   [P6]       │
@@ -86,7 +86,7 @@ ecsim/
 │   ├── gui/                    main window + screens/
 │   ├── content/                curriculum.yaml + modules/*.yaml (+ C harnesses inline)
 │   ├── cli.py                  headless interface
-│   ├── model/        [P4]      block library, graph, solver, codegen
+│   ├── model/        [BUILT]   blocks, compiler, simulator, MIL harness, backends/ (ecsim, simulink)
 │   ├── ecu/          [BUILT]   virtual ECU: profiles, HAL ABI (c/), timing model, scenarios, runner, lab
 │   ├── plants/       [P2+]     plant models (dc_motor built)
 │   ├── comms/        [P6]      CAN/J1939/ISOBUS/UDS/DBC/A2L
@@ -165,6 +165,7 @@ database in place is covered by `test_phase1_database_upgrades_in_place`.
 |---|---|---|
 | 0002_projects | P5 | `project`(V-model workspace, git path), `lifecycle_stage`, `deliverable`, `review` |
 | 0003_requirements | P5 | `requirement`(level: customer/system/functional/software, text, acceptance_criteria, status, version), `trace_link`(src, dst, kind: derives/satisfies/verifies), `change_request` |
+| 0003_model_mil | P3 [BUILT] | exercise kind `model_mil` (content table rebuilt) |
 | 0004_models | P4 | `model`(json graph, hash), `sim_run`(model hash, solver cfg, seed, result path) |
 | 0005_tests | P5/P12 | `test_case`, `test_run`, `test_result`, `coverage`, `defect` |
 | 0007_calibration | P12 | `cal_parameter`, `cal_dataset`, `cal_change` |
@@ -223,6 +224,36 @@ learner app.c ──gcc -Werror──▶ app.so/.dll ◀── hal.c (ecu_io str
 * **Grading:** `ecu_app` exercises run a list of scenarios. Every check is numeric and
   explained. Reference passes, starter fails, and each mutant (plausible defect) must
   build and fail — enforced by tests.
+
+## 7b. Model-based development core [BUILT, Phase 3]
+
+```
+             exercise spec (interface, requirements-based tests)
+                              │
+               select_backend(submission)
+          ┌───────────────────┴───────────────────┐
+   JSON text "{…"                          path/to/model.slx
+   EcsimBackend                            SimulinkBackend ── Session protocol
+   compile_model → Simulator                   ├─ EngineSession (matlab.engine: load_system,
+          │                                    │   find_system/get_param, sim, generated
+          │                                    │   closed-loop harness with Model block)
+          │                                    └─ test stand-in (ECSim engine)
+          └──────────── run_tests() ───────────┘
+          open-loop test vectors · closed loop with DiscreteMotor (exact ZOH)
+                              │
+                 checks: within · near · below_by · at  →  MilReport
+```
+
+* **Engine** (`model/core.py`, `model/blocks.py`): JSON model format, Simulink block
+  semantics (feedthrough, sorted order, outputs-then-updates), sample-time inheritance and
+  multi-rate hold, rate-transition warnings, algebraic-loop detection with the loop path,
+  virtual subsystems flattened at compile time.
+* **Backend parity**: both backends run the same tests with the same checks, and the plant is the
+  same exact discrete system. CI runs every exercise model through both paths (the Simulink
+  path via a stand-in session) and requires identical results. The MATLAB command sequence
+  is snapshot-tested against a recording fake; real-MATLAB runs are verified manually.
+* **Not yet:** vectors/buses, fixed-point types (P6), continuous blocks in models, Stateflow (P5),
+  closed loop with plants other than the DC motor (added per domain phase).
 
 ## 8. Graphical model editor architecture [PLANNED P4]
 

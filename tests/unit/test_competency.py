@@ -40,7 +40,7 @@ def test_assisted_pass_gives_no_credit(ctx, learner):
 
 
 def test_level_without_content_cannot_be_achieved(ctx, learner):
-    ctl = _status(ctx.competency.profile(learner), "MBD")
+    ctl = _status(ctx.competency.profile(learner), "ARC")  # no AUTOSAR content until Phase 13
     assert all(ls.points_available == 0 and not ls.achieved for ls in ctl.levels)
 
 
@@ -77,5 +77,6 @@ def test_track_gaps(ctx, learner):
     p = ctx.competency.profile(learner)
     gaps = {g.competency: g for g in p.track_gaps}
     assert gaps["EMB"].met                          # intermediate content complete
-    assert not gaps["MBD"].met                      # no MBD content until Phase 3/4
+    assert gaps["MBD"].met                          # Phase 3 MBD content
+    assert not gaps["ARC"].met                      # no AUTOSAR content until Phase 13
     assert not p.track_ready

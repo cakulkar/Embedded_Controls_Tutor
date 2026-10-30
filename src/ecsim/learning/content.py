@@ -12,7 +12,7 @@ import yaml
 
 LEVELS = ("beginner", "intermediate", "advanced", "expert")
 LEVEL_CODE = {"b": "beginner", "i": "intermediate", "a": "advanced", "e": "expert"}
-KINDS = ("numeric", "choice", "c_function", "ecu_app")
+KINDS = ("numeric", "choice", "c_function", "ecu_app", "model_mil")
 COMPETENCY_ORDER = ("EMB", "CTL", "MBD", "VEH", "COM", "ARC", "FUS", "TST", "DOC")
 
 
@@ -203,6 +203,19 @@ def _validate_spec(kind: str, spec: dict, where: str) -> None:
         unknown = [s for s in spec["scenarios"] if s not in SCENARIOS]
         if unknown:
             raise ContentError(f"{where}: unknown scenarios {unknown}")
+    elif kind == "model_mil":
+        from ecsim.model.blocks import ModelError
+        from ecsim.model.core import compile_model
+        for k in ("interface", "tests", "starter", "reference"):
+            _req(spec, k, where)
+        for k in ("starter", "reference"):
+            try:
+                compile_model(spec[k])
+            except ModelError as exc:
+                raise ContentError(f"{where}: {k} model does not compile: {exc}") from None
+        for t in spec["tests"]:
+            if t.get("type") not in ("open_loop", "closed_loop") or not t.get("checks"):
+                raise ContentError(f"{where}: test {t.get('name')} needs a type and at least one check")
 
 
 def sync_catalog(conn: sqlite3.Connection, cat: Catalog) -> None:

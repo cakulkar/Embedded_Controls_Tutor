@@ -13,7 +13,8 @@ TOOLS: dict[str, tuple[tuple[str, ...], tuple[str, ...], str, str]] = {
     "cppcheck": (("cppcheck",), ("--version",), "Static analysis labs (P2+)", "GPL (free)"),
     "scilab": (("scilab-cli", "scilab"), ("-version",), "Xcos models (P3)", "GPL (free)"),
     "omc": (("omc",), ("--version",), "OpenModelica plants (P3+)", "OSMC-PL (free)"),
-    "candump": (("candump",), (), "SocketCAN labs (P6, Linux only)", "GPL (free)"),
+    "candump": (("candump",), (), "SocketCAN labs (P8, Linux only)", "GPL (free)"),
+    "matlab": (("matlab",), (), "Grade Simulink .slx models (optional)", "commercial licence required"),
 }
 
 
@@ -47,4 +48,9 @@ def probe_one(name: str) -> ToolStatus:
 
 
 def probe() -> dict[str, ToolStatus]:
-    return {name: probe_one(name) for name in TOOLS}
+    res = {name: probe_one(name) for name in TOOLS}
+    from ecsim.model.backends.simulink_backend import matlab_engine_available
+    ok = matlab_engine_available()
+    res["matlab_engine"] = ToolStatus("matlab_engine", ok, "python package" if ok else None, None,
+                                      "MATLAB Engine for Python (runs .slx grading)", "ships with MATLAB")
+    return res

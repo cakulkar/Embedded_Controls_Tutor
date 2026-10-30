@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QPlainTextEdit, QPushButton, QRadioButton, QSplitter, QStackedWidget,
                                QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -75,12 +75,15 @@ class ExerciseView(QWidget):
         self.hint_btn = QPushButton("Next hint"); self.hint_btn.setObjectName("secondary")
         self.sol_btn = QPushButton("Show solution"); self.sol_btn.setObjectName("secondary")
         self.reset_btn = QPushButton("Reset starter"); self.reset_btn.setObjectName("secondary")
+        self.slx_btn = QPushButton("Use Simulink model…"); self.slx_btn.setObjectName("secondary")
+        self.slx_btn.setToolTip("Grade a .slx/.mdl with real Simulink (needs MATLAB + MATLAB Engine for Python)")
+        self.slx_btn.clicked.connect(self._choose_slx)
         self.submit_btn = QPushButton("Submit")
         self.hint_btn.clicked.connect(self.next_hint)
         self.sol_btn.clicked.connect(lambda: self.request_solution(confirm=True))
         self.reset_btn.clicked.connect(self._reset_code)
         self.submit_btn.clicked.connect(self.submit)
-        for b in (self.reset_btn, self.hint_btn, self.sol_btn, self.submit_btn):
+        for b in (self.slx_btn, self.reset_btn, self.hint_btn, self.sol_btn, self.submit_btn):
             bar.addWidget(b)
         lay.addLayout(bar)
 
@@ -115,7 +118,8 @@ class ExerciseView(QWidget):
         else:
             self.input_stack.setCurrentIndex(2)
             self.code.setPlainText(last if last is not None else ex.spec["starter"])
-        self.reset_btn.setVisible(ex.kind in ("c_function", "ecu_app"))
+        self.reset_btn.setVisible(ex.kind in ("c_function", "ecu_app", "model_mil"))
+        self.slx_btn.setVisible(ex.kind == "model_mil")
         self._refresh_state()
 
     def _refresh_state(self) -> None:
@@ -129,8 +133,13 @@ class ExerciseView(QWidget):
         self.status.setText(f"attempts: {st.attempts}   {badge}")
 
     def _reset_code(self) -> None:
-        if self.ex and self.ex.kind in ("c_function", "ecu_app"):
+        if self.ex and self.ex.kind in ("c_function", "ecu_app", "model_mil"):
             self.code.setPlainText(self.ex.spec["starter"])
+
+    def _choose_slx(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Simulink model", "", "Simulink models (*.slx *.mdl)")
+        if path:
+            self.code.setPlainText(path)
 
     def current_submission(self) -> str:
         if self.ex.kind == "numeric":
