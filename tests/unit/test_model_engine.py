@@ -63,7 +63,7 @@ def test_transfer_function_and_rate_limiter():
 
 
 def test_library_documents_simulink_equivalents():
-    assert all(bt.simulink.startswith("simulink/") for bt in LIB.values())
+    assert all(bt.simulink.startswith(("simulink/", "sflib/")) for bt in LIB.values())
 
 
 def test_sorted_order_respects_feedthrough_only():

@@ -309,3 +309,38 @@ def validate_params(type_name: str, p: dict) -> None:
     elif type_name == "MinMax":
         if p["fn"] not in ("min", "max") or int(p["inputs"]) < 1:
             raise ModelError("MinMax fn must be 'min' or 'max' with >= 1 input")
+
+
+# ---- Stateflow-style chart -----------------------------------------------------------
+def _chart_init(c: BlockCtx):
+    from ecsim.model.chart import Chart
+    chart = Chart(c.params["chart"])
+    return {"chart": chart, "rt": chart.init_state()}
+
+
+def _chart_out(c: BlockCtx, s, u):
+    return s["chart"].step(s["rt"], u, c.ts)
+
+
+def _chart_n(p: dict, which: int) -> int:
+    from ecsim.model.chart import chart_ports
+    return chart_ports(p)[which]
+
+
+_reg(BlockType("Chart", "sflib/Chart", lambda p: _chart_n(p, 0), lambda p: _chart_n(p, 1),
+               lambda p: [True] * _chart_n(p, 0), _chart_init, _chart_out,
+               defaults={"chart": {"inputs": ["u"], "outputs": ["y"], "initial": "A",
+                                   "states": [{"name": "A", "entry": "y = 0;"}, {"name": "B", "entry": "y = 1;"}],
+                                   "transitions": [{"from": "A", "to": "B", "guard": "u > 0"},
+                                                   {"from": "B", "to": "A", "guard": "u <= 0"}]}},
+               doc="Stateflow-style state machine: hierarchy, entry/during/exit, guards, after(n, tick|sec)."))
+
+_orig_validate = validate_params
+
+
+def validate_params(type_name: str, p: dict) -> None:  # noqa: F811 - extends the checks above
+    if type_name == "Chart":
+        from ecsim.model.chart import Chart
+        Chart(p["chart"])
+        return
+    _orig_validate(type_name, p)

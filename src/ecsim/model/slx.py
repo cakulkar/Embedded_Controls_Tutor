@@ -153,6 +153,10 @@ class _Reader:
             bpath = f"{path}/{bname}"
             p = dict(_DEFAULTS.get(btype, {}))
             p.update({e.get("Name"): (e.text or "") for e in b.findall("P")})
+            if btype == "SubSystem" and p.get("SFBlockType") == "Chart":
+                self.errors.append(f"{bpath}: Stateflow charts are not imported from .slx; recreate it as an ECSim "
+                                   "Chart (SCXML import is supported), or grade the .slx directly with Simulink")
+                continue
             if btype not in _TYPE_MAP:
                 self.errors.append(f"{bpath}: block type '{btype}' is not supported by the ECSim engine")
                 continue
@@ -383,6 +387,8 @@ def export_build_script(model: dict) -> str:
             args = "".join(f", '{k}', '{v}'" for k, v in _block_args(b))
             out.append(f"add_block('{lib}', [{parent} '/{b['id']}']{args}, "
                        f"'Position', [{int(x)} {int(y)} {int(x) + 40} {int(y) + 30}]);")
+            if b["type"] == "Chart":
+                out.append(f"% Chart '{b['id']}': add states/transitions in Stateflow (see the exported SCXML).")
             if b["type"] == "Subsystem":
                 inner_path = f"[{parent} '/{b['id']}']"
                 out.append(f"delete_line({inner_path}, 'In1/1', 'Out1/1');")

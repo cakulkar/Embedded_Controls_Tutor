@@ -28,7 +28,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from ecsim.model.blocks import STATEFUL, BlockCtx, ModelError, block_type, validate_params
+from ecsim.model import blocks as _blocks
+from ecsim.model.blocks import STATEFUL, BlockCtx, ModelError, block_type
 
 FORMAT = "ecsim-model"
 
@@ -178,7 +179,7 @@ def compile_model(model: str | dict) -> Compiled:
         params = dict(bt.defaults or {})
         params.update(b.get("params", {}))
         try:
-            validate_params(b["type"], params)
+            _blocks.validate_params(b["type"], params)
             n_in, n_out = bt.n_in(params), bt.n_out(params)
             ft = bt.feedthrough(params)
         except KeyError as exc:
