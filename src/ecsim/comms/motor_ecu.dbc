@@ -1,0 +1,25 @@
+VERSION "ECSim motor ECU 1.0"
+
+NS_ :
+
+BS_:
+
+BU_: MCU VCU
+
+BO_ 256 MCU_Status: 8 MCU
+ SG_ MotorSpeed : 0|16@1+ (0.5,0) [0|32767.5] "rpm" VCU
+ SG_ MotorMode : 16|3@1+ (1,0) [0|7] "" VCU
+ SG_ AliveCounter : 20|4@1+ (1,0) [0|15] "" VCU
+ SG_ MotorTemp : 24|8@1+ (1,-40) [-40|215] "degC" VCU
+ SG_ MotorCurrent : 32|16@1- (0.05,0) [-1638.4|1638.35] "A" VCU
+
+BO_ 512 VCU_Command: 8 VCU
+ SG_ SpeedRequest : 7|16@0+ (1,0) [0|65535] "rpm" MCU
+ SG_ EnableRequest : 23|1@0+ (1,0) [0|1] "" MCU
+
+BO_ 2364540158 EEC1: 8 MCU
+ SG_ EngineSpeed : 24|16@1+ (0.125,0) [0|8031.875] "rpm" VCU
+
+CM_ BO_ 256 "Motor control unit status, cycle 10 ms";
+CM_ SG_ 512 SpeedRequest "Motorola (big-endian) signal: start bit is the MSB";
+VAL_ 256 MotorMode 0 "OFF" 1 "STARTING" 2 "RUN" 3 "FAULT" ;

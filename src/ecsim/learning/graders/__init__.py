@@ -7,6 +7,7 @@ from ecsim.learning.graders.model_mil import ModelMilGrader
 from ecsim.learning.graders.model_sil import ModelSilGrader
 from ecsim.learning.graders.numeric import NumericGrader
 from ecsim.learning.graders.test_design import TestDesignGrader
+from ecsim.learning.graders.uds_script import UdsScriptGrader
 
 
 def default_graders(c_compiler: str = "gcc", c_timeout_s: float = 5.0) -> dict[str, Grader]:
@@ -18,7 +19,8 @@ def default_graders(c_compiler: str = "gcc", c_timeout_s: float = 5.0) -> dict[s
         "model_mil": ModelMilGrader(),
         "model_sil": ModelSilGrader(),
         "test_design": TestDesignGrader(),
+        "uds_script": UdsScriptGrader(),
     }
 
 
-__all__ = ["GradeResult", "Grader", "default_graders", "NumericGrader", "ChoiceGrader", "CFunctionGrader", "EcuAppGrader", "ModelMilGrader", "ModelSilGrader", "TestDesignGrader"]
+__all__ = ["GradeResult", "Grader", "default_graders", "NumericGrader", "ChoiceGrader", "CFunctionGrader", "EcuAppGrader", "ModelMilGrader", "ModelSilGrader", "TestDesignGrader", "UdsScriptGrader"]

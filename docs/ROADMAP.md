@@ -16,7 +16,7 @@ with **ECSim's own engine** otherwise. The exercises are the same either way.
 | 5 | **State machines (Stateflow-style)** | Hierarchical charts, entry/during/exit, guards/actions, temporal logic, mode and fault logic exercises, SCXML import/export | done |
 | 6 | **Code generation + SIL / back-to-back** | C codegen from supported blocks/charts, fixed-point types, MIL vs SIL B2B with tolerances, generated code on the virtual ECU, Embedded Coder/TargetLink concept bridge | done (fixed-point codegen not included) |
 | 7 | **Modeling guidelines + verification** | MAB/JMAAB-style rule checks, model review workflow, requirements manager with traceability, model/decision coverage | done |
-| 8 | CAN & diagnostics lab | DBC, J1939, UDS, bus faults; CAN on the virtual ECU | planned |
+| 8 | CAN & diagnostics lab | DBC, J1939, UDS, bus faults; CAN on the virtual ECU | done (vECU CAN pending) |
 | 9 | BMS & electric powertrain | Battery/inverter plants, SOC/SOH, balancing, precharge, all model-based | planned |
 | 10 | Engine, transmission & driveline | Engine/AT/clutch plants, shift logic, driveline oscillation | planned |
 | 11 | Body controls & ADAS | BCM state machines, ACC/AEB/LKA | planned |

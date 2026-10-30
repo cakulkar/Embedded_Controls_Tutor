@@ -184,3 +184,18 @@ Not generated: fixed-point data types, AUTOSAR RTE wrappers, Simulink Coder file
 Coverage is *decision coverage of model constructs* (not condition/MC-DC, not code coverage). The ReqIF
 subset is tested against ECSim's own export and modified variants. Please try an export from your
 requirements tool.
+
+## Phase 8 — CAN & diagnostics — **DONE (2026-10-29)**
+
+| Item | Evidence |
+|---|---|
+| DBC subset parser/writer, Intel and Motorola (sawtooth) signals, signed, value tables, comments; overlap/fit checks | `test_comms.py` |
+| J1939 29-bit ID ↔ PGN (PDU1/PDU2), DM1 DTC decoding/encoding | `test_j1939_ids_and_dm1` |
+| ISO-TP segmentation/reassembly with sequence checks | `test_isotp_round_trip_and_errors` |
+| UDS server: sessions, S3 timeout, SecurityAccess with lockout/delay, RDBI/WDBI, ReadDTC, ClearDTC, TesterPresent (suppress bit), ECUReset, standard NRCs | `test_uds_server_behaviour`, `test_security_lockout_after_three_wrong_keys` |
+| candump trace parsing and DBC/J1939 decoding | `test_trace_parse_and_decode` |
+| CAN Network Analyzer (database, trace, UDS console with ISO-TP view) | `test_can_analyzer_screen` |
+| Content I01: CAN/DBC, J1939/DM1, UDS; Motorola extraction in C; UDS service-script practical | `test_uds_script_exercise_quality`, C grader tests |
+
+Not yet: CAN on the virtual ECU (mailboxes, cyclic TX, RX timeout scenario), CAN FD/LIN/Ethernet labs,
+XCP/A2L (planned with calibration, Phase 14), multiplexed DBC signals.
