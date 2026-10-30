@@ -21,8 +21,6 @@ PLANNED = {
     "Vehicle & Machine Simulator": (9, ["Engine, e-motor, inverter, battery, transmission, clutch, differential",
                                         "Vehicle dynamics, hydraulic pump/cylinder, steering, brakes, HVAC",
                                         "Radar/camera abstractions; lock-step with the virtual ECU"]),
-    "CAN Network Analyzer": (8, ["Trace view, DBC decode/encode (cantools), logging & replay",
-                                 "J1939, ISOBUS concepts, UDS, bus-off & timeout fault handling"]),
     "Calibration Studio": (14, ["Parameter identification, LUT/breakpoint design, A2L & XCP concepts",
                                 "Calibration datasets and change management"]),
     "AI Engineering Mentor": (15, ["Local LLM only, retrieval over local docs with citations",
@@ -69,6 +67,9 @@ class MainWindow(QMainWindow):
                 from ecsim.gui.screens.verification import TestingCenterScreen
                 w = TestingCenterScreen(ctx, learner_id, studio_model=lambda: self.screens["Control Model Studio"]._commit_to_root().model
                                         if self.screens["Control Model Studio"].doc.model["blocks"] else None)
+            elif name == "CAN Network Analyzer":
+                from ecsim.gui.screens.can_analyzer import CanAnalyzerScreen
+                w = CanAnalyzerScreen(ctx, learner_id)
             elif name == "Virtual ECU Lab":
                 w = EcuLabScreen(ctx, learner_id)
             elif name == "Competency & Certification":

@@ -116,3 +116,19 @@ def test_model_exercise_in_academy(win, ctx):
     assert "8/8 checks passed" in ev.feedback.toPlainText()
     academy.select("B01-E1")
     assert not ev.slx_btn.isVisibleTo(ev)
+
+
+def test_can_analyzer_screen(win):
+    can = win.show_screen("CAN Network Analyzer")
+    assert "3 messages" in can.db_label.text() and can.tree.topLevelItemCount() == 3
+    assert can.decode() == 6
+    can.filter.setText("EEC1")
+    assert can.trace_table.rowCount() == 1
+    assert "POSITIVE" in can.send("22 F1 90") and "ISO-TP frames" in can.uds_log.toPlainText()
+    assert "serviceNotSupportedInActiveSession" in can.send("2E 01 01 09 C4")
+    can.send("10 03"); can.send("27 01")
+    assert can.send("27 02 $KEY") == "POSITIVE: 67 02"
+    assert "unlocked" in can.state.text()
+    can.wait(6000)
+    assert "default" in can.state.text() and "S3 timeout" in can.uds_log.toPlainText()
+    assert not can.load_dbc_text("BO_ 1 M: 1 N\n SG_ a : 4|8@1+ (1,0) [0|1] \"\" X\n", "bad.dbc")

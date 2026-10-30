@@ -28,7 +28,7 @@ ecsim-gui = "ecsim.gui.main_window:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ecsim = ["db/migrations/*.sql", "content/*.yaml", "content/modules/*.yaml", "ecu/c/*.h", "ecu/c/*.c"]
+ecsim = ["db/migrations/*.sql", "content/*.yaml", "content/modules/*.yaml", "ecu/c/*.h", "ecu/c/*.c", "comms/*.dbc"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

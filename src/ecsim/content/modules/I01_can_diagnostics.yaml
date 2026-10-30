@@ -1,0 +1,431 @@
+# CAN/J1939/UDS module; references and mutants verified by tests.
+id: I01
+department: I
+title: CAN, DBC, J1939 and UDS diagnostics
+ordinal: 1
+version: '1'
+lessons:
+- id: I01-L1
+  title: CAN frames, arbitration and DBC signals
+  body: |
+    # CAN in one page
+
+    A classic CAN data frame carries an **identifier** (11-bit standard or 29-bit extended) and 0–8 data
+    bytes. Arbitration is bitwise: dominant (0) bits win, so the **lowest identifier has the highest
+    priority** and wins without destroying the other frame.
+
+    ### DBC files
+    A DBC describes messages (`BO_`) and the signals (`SG_`) packed into them:
+
+    ```
+    SG_ SpeedRequest : 7|16@0+ (1,0) [0|65535] "rpm" MCU
+                       │  │  │└ + unsigned / - signed
+                       │  │  └ 0 = Motorola (big-endian), 1 = Intel (little-endian)
+                       │  └ length in bits
+                       └ start bit
+    ```
+
+    * **Intel (@1):** the start bit is the **LSB**; bits run upwards.
+    * **Motorola (@0):** the start bit is the **MSB** in "sawtooth" numbering. Within a byte, bits run
+      7 → 0; then it continues at bit 7 of the *next* byte (bit index + 15).
+    * Physical value = raw × factor + offset. Check `VAL_` tables for enumerations.
+
+    The CAN Network Analyzer decodes traces (`candump` format) with a DBC. Try it with the built-in motor ECU DBC.
+- id: I01-L2
+  title: J1939 identifiers, PGNs and DM1
+  body: |
+    # SAE J1939 (trucks, agricultural and construction machines)
+
+    The 29-bit identifier is structured: **priority (3) · EDP/DP (2) · PF (8) · PS (8) · source address (8)**.
+
+    * **PF < 240 (PDU1):** PS is a destination address; the PGN's low byte is 0.
+    * **PF ≥ 240 (PDU2):** PS is a group extension and part of the PGN (broadcast).
+
+    Example: `0x0CF00400` → priority 3, PF 0xF0 ≥ 240 → PGN 0xF004 = **61444 (EEC1)**, source address 0x00 (engine).
+
+    ### DM1: active diagnostic trouble codes
+    After two lamp-status bytes, each DTC takes 4 bytes: **SPN** (19 bits: byte 0, byte 1, top 3 bits of
+    byte 2), **FMI** (low 5 bits of byte 2), **occurrence count** (low 7 bits of byte 3). ISOBUS (ISO 11783)
+    on agricultural machines builds on the same mechanisms.
+- id: I01-L3
+  title: 'UDS: sessions, security and DTCs'
+  body: |
+    # UDS (ISO 14229) essentials
+
+    | Service | Request | Positive response |
+    |---|---|---|
+    | DiagnosticSessionControl | `10 01/02/03` | `50 ..` |
+    | ECUReset | `11 01` | `51 01` |
+    | ReadDataByIdentifier | `22 F1 90` (VIN) | `62 F1 90 <data>` |
+    | SecurityAccess | `27 01` → seed, `27 02 <key>` | `67 01 <seed>`, `67 02` |
+    | WriteDataByIdentifier | `2E <DID> <data>` | `6E <DID>` |
+    | ReadDTCInformation | `19 02 <mask>` | `59 02 <avail> [DTC(3) status]…` |
+    | ClearDiagnosticInformation | `14 FF FF FF` | `54` |
+    | TesterPresent | `3E 00` (`3E 80`: suppress response) | `7E 00` |
+
+    A **negative response** is `7F <service> <NRC>`. The ones you will meet most:
+    `0x11` service not supported, `0x13` wrong length, `0x31` request out of range,
+    `0x33` security access denied, `0x35` invalid key, `0x7F` service not supported in active session.
+
+    Writing data usually needs the **extended session** *and* an **unlocked** security level. Without
+    TesterPresent, the ECU falls back to the default session after the S3 timeout (≈5 s).
+
+    ISO-TP (ISO 15765-2) splits longer messages into a first frame, flow control and consecutive frames.
+
+    ECSim's training ECU computes the key as `(seed XOR 0x5A3C)` rotated left by 3 bits. In scripts, write
+    `27 02 $KEY` and the key for the last seed is inserted. Real OEM algorithms are confidential.
+exercises:
+- id: I01-E1
+  kind: numeric
+  title: Decode a Motorola signal
+  competency: COM
+  level: beginner
+  points: 10
+  prompt: |
+    Message `VCU_Command` carries `SG_ SpeedRequest : 7|16@0+ (1,0) [0|65535] "rpm"`. The frame data is `0F A0 80 00 00 00 00 00`. What is SpeedRequest in rpm?
+  spec:
+    answer: 4000
+    abs_tol: 0
+  hints:
+  - Motorola, start bit 7 = MSB of byte 0. The 16 bits are byte 0 then byte 1.
+  solution: |
+    Raw = 0x0FA0 = **4000** rpm (factor 1, offset 0).
+- id: I01-E2
+  kind: numeric
+  title: PGN from a J1939 identifier
+  competency: COM
+  level: intermediate
+  points: 10
+  prompt: |
+    What PGN (decimal) does the 29-bit identifier `0x18FEF100` carry?
+  spec:
+    answer: 65265
+    abs_tol: 0
+    integer: true
+  hints:
+  - Split into priority, DP, PF, PS, SA. Is PF below 240?
+  solution: |
+    PF = 0xFE ≥ 240 (PDU2), so PGN = 0xFEF1 = **65265** (CCVS, cruise control/vehicle speed); SA = 0x00.
+- id: I01-E3
+  kind: numeric
+  title: SPN in a DM1 DTC
+  competency: COM
+  level: intermediate
+  points: 10
+  prompt: |
+    A DM1 DTC field reads `6E 00 03 01`. What is the SPN?
+  spec:
+    answer: 110
+    abs_tol: 0
+    integer: true
+  hints:
+  - SPN = byte0 + (byte1 << 8) + ((byte2 >> 5) << 16).
+  solution: |
+    SPN = 0x6E = **110** (engine coolant temperature), FMI = 3 (voltage above normal), occurrence count 1.
+- id: I01-E4
+  kind: choice
+  title: Read the negative response
+  competency: COM
+  level: beginner
+  points: 10
+  prompt: |
+    You send `2E 01 01 09 C4` right after power-up and receive `7F 2E 7F`. What is wrong?
+  spec:
+    options:
+    - The DID does not exist.
+    - The ECU is in the default session; writing needs the extended session (and security access).
+    - The key was wrong.
+    - The message is too long.
+    correct:
+    - 1
+  hints:
+  - 'Decode the NRC: 0x7F.'
+  solution: |
+    NRC 0x7F = **serviceNotSupportedInActiveSession**. Switch to the extended session (`10 03`), unlock (`27 01` / `27 02`), then write.
+- id: I01-E5
+  kind: choice
+  title: Arbitration
+  competency: COM
+  level: beginner
+  points: 10
+  prompt: |
+    Two nodes start transmitting at the same time with standard identifiers 0x100 and 0x0FF. What happens?
+  spec:
+    options:
+    - Both frames are destroyed and retransmitted.
+    - 0x100 wins (higher ID, higher priority).
+    - 0x0FF wins; the other node stops sending at the first bit where it sends recessive but reads dominant, and retries later.
+    - The bus goes bus-off.
+    correct:
+    - 2
+  hints:
+  - 'Which value is dominant on the bus: 0 or 1?'
+  solution: |
+    **0x0FF wins.** The lower identifier has a dominant bit earlier. Arbitration is non-destructive.
+- id: I01-E6
+  kind: c_function
+  title: Extract a Motorola (big-endian) signal
+  competency: COM
+  level: intermediate
+  points: 25
+  practical: true
+  prompt: |
+    Implement
+
+    ```c
+    uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length);
+    ```
+
+    Return the raw value of a **Motorola** (DBC `@0`) signal whose `start_bit` is its **MSB** in sawtooth numbering
+    (bit *i* = bit *i % 8* of byte *i / 8*; after bit 0 of a byte continue at bit 7 of the next byte).
+    Return 0 if `data` is NULL, `length` is not 1…32, or any bit of the signal falls outside the 8 bytes.
+    (A01-E4 did the Intel case.)
+  spec:
+    prototypes: 'uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length);
+
+      '
+    starter: "uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length)\n{\n    /* TODO */\n    (void)data; (void)start_bit; (void)length;\n    return 0u;\n}\n"
+    harness: |
+      int main(void)
+      {
+          const uint8_t cmd[8] = {0x09u, 0xC4u, 0x80u, 0, 0, 0, 0, 0};
+          const uint8_t a[8] = {0xABu, 0, 0, 0, 0, 0, 0, 0};
+          const uint8_t b[8] = {0x0Au, 0xB0u, 0, 0, 0, 0, 0, 0};
+          const uint8_t c[8] = {0x12u, 0x34u, 0x56u, 0x78u, 0, 0, 0, 0};
+          const uint8_t d[8] = {0, 0, 0, 0, 0, 0, 0, 0xC5u};
+          const uint8_t e[8] = {0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu};
+          CHECK_EQ_U(can_get_signal_be(cmd, 7u, 16u), 0x09C4u, "SpeedRequest 2500 rpm (start 7, 16 bit)");
+          CHECK_EQ_U(can_get_signal_be(cmd, 23u, 1u), 1u, "EnableRequest (start 23, 1 bit)");
+          CHECK_EQ_U(can_get_signal_be(a, 3u, 4u), 0xBu, "low nibble of byte 0");
+          CHECK_EQ_U(can_get_signal_be(b, 3u, 8u), 0xABu, "signal crossing into the next byte (sawtooth)");
+          CHECK_EQ_U(can_get_signal_be(c, 7u, 32u), 0x12345678u, "32-bit signal");
+          CHECK_EQ_U(can_get_signal_be(d, 63u, 8u), 0xC5u, "last byte");
+          CHECK_EQ_U(can_get_signal_be(e, 56u, 16u), 0u, "runs past the end of the frame: rejected");
+          CHECK_EQ_U(can_get_signal_be(e, 7u, 33u), 0u, "length 33 rejected");
+          CHECK_EQ_U(can_get_signal_be(e, 7u, 0u), 0u, "length 0 rejected");
+          CHECK_EQ_U(can_get_signal_be(NULL, 7u, 8u), 0u, "NULL rejected");
+          return ECSIM_DONE();
+      }
+    reference: |
+      uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+      {
+          uint32_t raw = 0u;
+          uint32_t pos = start_bit;
+          uint8_t i;
+          bool ok = (data != NULL) && (length >= 1u) && (length <= 32u) && (start_bit < 64u);
+          for (i = 0u; ok && (i < length); i++)
+          {
+              if (pos > 63u)
+              {
+                  ok = false;
+              }
+              else
+              {
+                  raw = (raw << 1) | (((uint32_t)data[pos / 8u] >> (pos % 8u)) & 1u);
+                  pos = ((pos % 8u) == 0u) ? (pos + 15u) : (pos - 1u);
+              }
+          }
+          return ok ? raw : 0u;
+      }
+    mutants:
+    - |
+      uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+      {
+          uint32_t raw = 0u;
+          uint32_t pos = start_bit;
+          uint8_t i;
+          bool ok = (data != NULL) && (length >= 1u) && (length <= 32u) && (start_bit < 64u);
+          for (i = 0u; ok && (i < length); i++)
+          {
+              if (pos > 63u)
+              {
+                  ok = false;
+              }
+              else
+              {
+                  raw = (raw << 1) | (((uint32_t)data[pos / 8u] >> (pos % 8u)) & 1u);
+                  pos = pos - 1u;
+              }
+          }
+          return ok ? raw : 0u;
+      }
+    - |
+      uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+      {
+          uint32_t raw = 0u;
+          uint32_t pos = start_bit;
+          uint8_t i;
+          bool ok = (data != NULL) && (length >= 1u) && (start_bit < 64u);
+          for (i = 0u; ok && (i < length); i++)
+          {
+              if (pos > 63u)
+              {
+                  ok = false;
+              }
+              else
+              {
+                  raw = (raw << 1) | (((uint32_t)data[pos / 8u] >> (pos % 8u)) & 1u);
+                  pos = ((pos % 8u) == 0u) ? (pos + 15u) : (pos - 1u);
+              }
+          }
+          return ok ? raw : 0u;
+      }
+  hints:
+  - 'Walk the bits from the MSB: shift raw left, OR in the current bit, then move to the next bit position.'
+  - 'Next position: if pos % 8 == 0 then pos + 15, else pos − 1. Check every position is < 64 before you read it.'
+  solution: |
+    ```c
+    uint32_t can_get_signal_be(const uint8_t data[8], uint8_t start_bit, uint8_t length)
+    {
+        uint32_t raw = 0u;
+        uint32_t pos = start_bit;
+        uint8_t i;
+        bool ok = (data != NULL) && (length >= 1u) && (length <= 32u) && (start_bit < 64u);
+        for (i = 0u; ok && (i < length); i++)
+        {
+            if (pos > 63u)
+            {
+                ok = false;
+            }
+            else
+            {
+                raw = (raw << 1) | (((uint32_t)data[pos / 8u] >> (pos % 8u)) & 1u);
+                pos = ((pos % 8u) == 0u) ? (pos + 15u) : (pos - 1u);
+            }
+        }
+        return ok ? raw : 0u;
+    }
+    ```
+    The sawtooth step (`+15` after bit 0 of a byte) is the whole trick, and the most common bug in hand-written decoders.
+- id: I01-E7
+  kind: uds_script
+  title: Service the ECU over UDS
+  competency: COM
+  level: advanced
+  points: 35
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    A field engineer asks you to service a motor ECU over UDS. Write the request sequence (one hex request per line;
+    `wait <ms>` and `# comments` allowed; `$KEY` inserts the key for the last seed).
+
+    Goals:
+    1. Read and record the VIN (DID `F190`) before changing anything.
+    2. Set the speed setpoint DID `0101` (2 bytes, rpm, big-endian) to **2500 rpm**.
+    3. Clear **all** DTCs.
+    4. Leave the ECU in the **default session**.
+    5. **No negative responses**: a service tool that provokes NRCs on a customer vehicle looks unprofessional and can lock security access.
+  spec:
+    goals:
+    - kind: read_did
+      did: 61840
+      name: VIN read
+    - kind: did_value
+      did: 257
+      hex: 09C4
+      name: setpoint 2500 rpm written
+    - kind: no_dtcs
+      name: DTCs cleared
+    - kind: final_session
+      session: 1
+      name: back in default session
+    - kind: max_negative
+      n: 0
+      name: no negative responses
+    starter: '# write your requests here, e.g.
+
+      22 F1 90
+
+      '
+    reference: '22 F1 90
+
+      10 03
+
+      27 01
+
+      27 02 $KEY
+
+      2E 01 01 09 C4
+
+      14 FF FF FF
+
+      10 01
+
+      '
+    mutants:
+    - '22 F1 90
+
+      2E 01 01 09 C4
+
+      14 FF FF FF
+
+      '
+    - '22 F1 90
+
+      10 03
+
+      2E 01 01 09 C4
+
+      14 FF FF FF
+
+      10 01
+
+      '
+    - '22 F1 90
+
+      10 03
+
+      27 01
+
+      27 02 $KEY
+
+      2E 01 01 0A 28
+
+      14 FF FF FF
+
+      10 01
+
+      '
+    - '22 F1 90
+
+      10 03
+
+      27 01
+
+      27 02 $KEY
+
+      2E 01 01 09 C4
+
+      14 FF FF FF
+
+      '
+    - '22 F1 90
+
+      10 03
+
+      27 01
+
+      27 02 $KEY
+
+      wait 6000
+
+      2E 01 01 09 C4
+
+      14 FF FF FF
+
+      10 01
+
+      '
+  hints:
+  - Which session allows writing, and what else does WriteDataByIdentifier require?
+  - '2500 = 0x09C4. Watch the S3 timeout: no long pauses without TesterPresent.'
+  solution: |
+    ```
+    22 F1 90        # VIN first
+    10 03           # extended session
+    27 01           # request seed
+    27 02 $KEY      # send key
+    2E 01 01 09 C4  # 2500 rpm
+    14 FF FF FF     # clear all DTCs
+    10 01           # back to default
+    ```
