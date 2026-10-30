@@ -53,7 +53,7 @@ leaves the machine.
 ## Test
 
 ```bash
-pytest                             # 110 tests: unit, integration, GUI (Qt offscreen)
+pytest                             # 111 tests: unit, integration, GUI (Qt offscreen)
 ```
 
 The suite compiles every C exercise's reference solution (it must pass), every

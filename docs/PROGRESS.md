@@ -65,7 +65,12 @@ UTF-8, and `test_portability.py` guards it on every OS.
 | Virtual ECU Lab screen (build/run, plots, checks, DEM/reset log, CSV export) | built | `test_ecu_lab_screen` |
 | CLI `ecsim ecu profiles`, `ecsim ecu run … --csv` | built | `test_cli_ecu` |
 
-**Test totals:** 110 passed on Linux. Windows CI result pending on the PR.
+**Test totals:** 111 passed on Linux and in CI on `ubuntu-latest` and `windows-latest`.
+
+**Windows fixes found by CI (2026-10-29):** unique DLL copy per load (Windows locks loaded
+DLLs); no error-reporting dialog in the runner child; UTF-8 CLI output; access violations
+in learner code (raised as `OSError` by ctypes on Windows) reported as located crashes,
+e.g. `task_10ms() crashed at t=20 ms`. CI now publishes failing tests as annotations.
 
 ### Known limitations (Phase 2)
 - Execution time is *modelled* per task, not measured from the learner's instructions.
