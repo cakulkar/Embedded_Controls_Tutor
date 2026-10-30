@@ -19,9 +19,13 @@
 | GUI shell: 14 screens; Dashboard, Learning Academy, Competency built; 11 labelled with their phase | built | `test_gui_smoke.py` |
 | Starter content: A01, A02, B01 (8 lessons, 12 exercises, 4 compiled-C exercises) | built | content tests |
 
-**Test totals:** 71 passed (Python 3.13, PySide6 6.12, GCC 13.3, Linux).
-Not yet verified on Windows. Expected to work, since the code has no POSIX-only calls,
-but it's untested there.
+**Test totals:** 73 passed on Linux (Python 3.13, PySide6 6.12, GCC 13.3) and in CI
+on `ubuntu-latest` and `windows-latest` (Python 3.11, GitHub Actions).
+
+**Windows fix (2026-10-29):** the first Windows CI run found that text I/O used the
+locale encoding (cp1252). That broke two content tests and would have crashed C
+grading for learner code with non-ASCII comments. All text I/O is now explicitly
+UTF-8, and `test_portability.py` guards it on every OS.
 
 ### Known limitations (Phase 1)
 - Lesson math is written in LaTeX (`$$…$$`). Qt's Markdown renderer shows it as raw text.

@@ -1,5 +1,7 @@
 # ECSim — Embedded Controls Engineer Job Simulator
 
+[![tests](https://github.com/cakulkar/Embedded_Controls_Tutor/actions/workflows/tests.yml/badge.svg)](https://github.com/cakulkar/Embedded_Controls_Tutor/actions/workflows/tests.yml)
+
 An offline desktop engineering simulator for learning to work as an embedded
 controls engineer (automotive, agricultural, construction). It is **not** a
 tutorial website: every lesson is backed by graded engineering exercises, and
@@ -47,7 +49,7 @@ leaves the machine.
 ## Test
 
 ```bash
-pytest                             # 71 tests: unit, integration, GUI (Qt offscreen)
+pytest                             # 73 tests: unit, integration, GUI (Qt offscreen)
 ```
 
 The suite compiles every C exercise's reference solution (it must pass), every
