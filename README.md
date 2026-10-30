@@ -7,9 +7,11 @@ controls engineer (automotive, agricultural, construction). It is **not** a
 tutorial website: every lesson is backed by graded engineering exercises, and
 competency is credited only for independent work.
 
-> **Status: Phase 1 of 15.** The framework, database, learning engine, graders,
-> competency scoring, CLI and GUI shell work and are tested. The other 11
-> screens show which phase delivers them. See `docs/PROGRESS.md`.
+> **Status: Phase 2 of 15.** Learning engine, graders and competency scoring
+> (Phase 1) plus the **virtual ECU**: write motor-control firmware in C and run it
+> in closed loop against a simulated motor on a Cortex-M or AURIX TC3xx-style
+> target, with fault injection, watchdogs and resets. Ten screens still show which
+> phase delivers them. See `docs/PROGRESS.md`.
 
 ## Install
 
@@ -41,6 +43,8 @@ ecsim solution A01-E3              # needs at least one attempt (--force overrid
 ecsim status                       # competency profile and track gaps
 ecsim backup ~/ecsim-backup.db  /  ecsim restore ~/ecsim-backup.db
 ecsim doctor                       # optional toolchains: gcc, cmake, gdb, cppcheck, scilab, omc, candump
+ecsim ecu profiles                 # virtual ECU targets and scenarios
+ecsim ecu run fw.c --profile TC3XX_LIKE --scenario motor_task_hang --csv trace.csv
 ```
 
 Data lives in `~/.ecsim` (override with `ECSIM_HOME` or `--home`). Nothing
@@ -49,13 +53,15 @@ leaves the machine.
 ## Test
 
 ```bash
-pytest                             # 73 tests: unit, integration, GUI (Qt offscreen)
+pytest                             # 111 tests: unit, integration, GUI (Qt offscreen)
 ```
 
 The suite compiles every C exercise's reference solution (it must pass), every
 starter (it must fail), and every *mutant* (a plausible wrong solution that must
 compile and then be caught by the hidden tests). This checks that the tests are
-strong enough to grade with.
+strong enough to grade with. The same applies to the firmware exercises, where
+mutants include "watchdog serviced from the 1 ms task" and "sensor range check
+missing the low side".
 
 ## Pedagogy rules enforced by the engine
 * Hints are revealed in order. Hint *k* (k ≥ 2) unlocks only after *k−1* attempts.
@@ -67,7 +73,8 @@ strong enough to grade with.
 
 ## Extend: add content
 Add `src/ecsim/content/modules/<ID>_<name>.yaml` (copy an existing module). Supported
-exercise kinds are `numeric`, `choice` and `c_function`. A `c_function` exercise needs
+exercise kinds are `numeric`, `choice`, `c_function` and `ecu_app` (firmware graded on the
+virtual ECU against scenarios in `ecsim/ecu/scenarios.py`). A `c_function` exercise needs
 `prototypes`, `starter`, `harness` (uses `CHECK`, `CHECK_EQ_U`, `CHECK_EQ_I`,
 `CHECK_NEAR`, `ECSIM_DONE()`), `reference` and ideally `mutants`. Then run
 `pytest`: content validation and the reference/mutant checks run automatically.
@@ -81,5 +88,5 @@ exercise kinds are `numeric`, `choice` and `c_function`. A `c_function` exercise
 | Corrupt DB | `ecsim restore <backup>`. Restore runs an integrity check before replacing anything. |
 
 ## Documentation
-`docs/ARCHITECTURE.md` · `docs/CURRICULUM.md` · `docs/TOOL_SUBSTITUTES.md` ·
+`docs/ARCHITECTURE.md` (§7a: virtual ECU) · `docs/CURRICULUM.md` · `docs/TOOL_SUBSTITUTES.md` ·
 `docs/ROADMAP.md` · `docs/PROGRESS.md`

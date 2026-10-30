@@ -36,11 +36,27 @@ def test_registry_rejects_duplicates():
 
 def test_migrations_idempotent(tmp_path):
     conn = open_db(tmp_path / "x.db")
-    assert migrate(conn) == [1]
+    assert migrate(conn) == [1, 2]
     assert migrate(conn) == []
-    assert current_version(conn) == 1
+    assert current_version(conn) == 2
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"attempt", "exercise", "learner", "hint_reveal", "solution_reveal"} <= tables
+    assert {"attempt", "exercise", "learner", "hint_reveal", "solution_reveal", "ecu_run"} <= tables
+
+
+def test_phase1_database_upgrades_in_place(tmp_path):
+    """A Phase 1 learner database must upgrade to 0002 without losing evidence."""
+    from ecsim.app.config import MIGRATIONS_DIR
+    import shutil
+    old = tmp_path / "m"
+    old.mkdir()
+    shutil.copy(MIGRATIONS_DIR / "0001_initial.sql", old)
+    conn = open_db(tmp_path / "x.db")
+    migrate(conn, old)
+    conn.execute("INSERT INTO learner(name) VALUES ('Ana')")
+    conn.execute("INSERT INTO attempt(learner_id, exercise_id, content_hash, submission, passed, score, feedback,"
+                 " hints_used, solution_seen, independent) VALUES (1,'A01-E1','h','1',1,1,'ok',0,0,1)")
+    assert migrate(conn) == [2]
+    assert conn.execute("SELECT COUNT(*) FROM attempt").fetchone()[0] == 1
 
 
 def test_foreign_keys_enforced(tmp_path):

@@ -84,3 +84,21 @@ def test_lesson_and_track(win, ctx, learner):
     comp = win.show_screen("Competency & Certification")
     comp.track.setCurrentIndex(comp.track.findData("ADAS_CTL"))
     assert ctx.competency.profile(learner).track_code == "ADAS_CTL"
+
+
+@needs_cc
+def test_ecu_lab_screen(win, ctx):
+    from ecsim.gui.screens import EcuLabScreen
+    lab = win.show_screen("Virtual ECU Lab")
+    assert isinstance(lab, EcuLabScreen)
+    assert "TODO" in lab.code.toPlainText()                      # starter, never the reference
+    assert not lab.load_last_submission()
+    lab.code.setPlainText(ctx.catalog.exercise("A05-E1").spec["reference"])
+    lab.profile.setCurrentIndex(lab.profile.findData("TC3XX_LIKE"))
+    lab.scenario.setCurrentIndex(lab.scenario.findData("motor_task_hang"))
+    lab.run()
+    assert lab.summary.text().startswith("<b>PASS")
+    assert lab.checks.rowCount() == 3 and "reset at 1600 ms" in lab.log.toPlainText()
+    lab.code.setPlainText("void app_init(void) { int x; }")
+    lab.run()
+    assert "Build failed" in lab.summary.text() and "your_app.c" in lab.log.toPlainText()

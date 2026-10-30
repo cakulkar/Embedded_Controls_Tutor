@@ -12,7 +12,7 @@ import yaml
 
 LEVELS = ("beginner", "intermediate", "advanced", "expert")
 LEVEL_CODE = {"b": "beginner", "i": "intermediate", "a": "advanced", "e": "expert"}
-KINDS = ("numeric", "choice", "c_function")
+KINDS = ("numeric", "choice", "c_function", "ecu_app")
 COMPETENCY_ORDER = ("EMB", "CTL", "MBD", "VEH", "COM", "ARC", "FUS", "TST", "DOC")
 
 
@@ -191,6 +191,18 @@ def _validate_spec(kind: str, spec: dict, where: str) -> None:
     elif kind == "c_function":
         for k in ("prototypes", "starter", "harness", "reference"):
             _req(spec, k, where)
+    elif kind == "ecu_app":
+        from ecsim.ecu.profiles import get_profile
+        from ecsim.ecu.scenarios import SCENARIOS
+        for k in ("profile", "scenarios", "starter", "reference"):
+            _req(spec, k, where)
+        try:
+            get_profile(spec["profile"])
+        except KeyError as exc:
+            raise ContentError(f"{where}: {exc}") from None
+        unknown = [s for s in spec["scenarios"] if s not in SCENARIOS]
+        if unknown:
+            raise ContentError(f"{where}: unknown scenarios {unknown}")
 
 
 def sync_catalog(conn: sqlite3.Connection, cat: Catalog) -> None:

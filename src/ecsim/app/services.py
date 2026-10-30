@@ -9,6 +9,7 @@ from typing import Any
 from ecsim.app.config import Settings
 from ecsim.app.events import EventBus
 from ecsim.db import migrate, open_db
+from ecsim.ecu.lab import EcuLab
 from ecsim.learning.competency import CompetencyService
 from ecsim.learning.content import Catalog, load_catalog, sync_catalog
 from ecsim.learning.engine import LearningEngine
@@ -40,6 +41,7 @@ class AppContext:
     learning: LearningEngine
     competency: CompetencyService
     registry: ServiceRegistry
+    ecu_lab: EcuLab
 
     def close(self) -> None:
         self.conn.close()
@@ -56,8 +58,9 @@ def bootstrap(home: Path | str | None = None, db_path: str | None = None) -> App
     graders = default_graders(settings.c_compiler, settings.c_timeout_s)
     learning = LearningEngine(conn, catalog, graders, bus)
     competency = CompetencyService(conn, catalog)
+    ecu_lab = EcuLab(conn, settings.c_compiler)
     reg = ServiceRegistry()
     for name, svc in (("settings", settings), ("bus", bus), ("catalog", catalog),
-                      ("learning", learning), ("competency", competency)):
+                      ("learning", learning), ("competency", competency), ("ecu_lab", ecu_lab)):
         reg.register(name, svc)
-    return AppContext(settings, conn, bus, catalog, learning, competency, reg)
+    return AppContext(settings, conn, bus, catalog, learning, competency, reg, ecu_lab)

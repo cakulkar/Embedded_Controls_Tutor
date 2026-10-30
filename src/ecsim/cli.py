@@ -71,7 +71,7 @@ def cmd_show(ctx: AppContext, a) -> int:
     if e.kind == "choice":
         for i, o in enumerate(e.spec["options"]):
             print(f"  [{i}] {o}")
-    if e.kind == "c_function":
+    if e.kind in ("c_function", "ecu_app"):
         print("--- starter code (save to a file and submit with --file) ---")
         print(e.spec["starter"])
     st = ctx.learning.state(lid, e.id)
@@ -152,6 +152,54 @@ def cmd_restore(ctx: AppContext, a) -> int:
     return 0
 
 
+def cmd_ecu_profiles(ctx: AppContext, a) -> int:
+    from ecsim.ecu.profiles import PROFILES
+    from ecsim.ecu.scenarios import SCENARIOS
+    for p in PROFILES.values():
+        wd = p.watchdog
+        win = f", window ≥{wd.window_min_ms} ms" if wd.window_min_ms else ""
+        print(f"{p.code:12s} {p.title}\n             {p.cpu_mhz} MHz, {p.cores} core(s) ({p.cores_simulated} simulated), "
+              f"{wd.name} timeout {wd.timeout_ms} ms{win}")
+        for t in p.tasks:
+            print(f"             {t.name:11s} every {t.period_ms:3d} ms, modelled WCET {t.wcet_us} µs")
+        for item in p.planned:
+            print(f"             planned: {item}")
+    print("\nScenarios:")
+    for sc in SCENARIOS.values():
+        print(f"  {sc.name:26s} {sc.description}")
+    return 0
+
+
+def cmd_ecu_run(ctx: AppContext, a) -> int:
+    rows = ctx.learning.learners()
+    lid = _learner(ctx, a.learner) if rows else None
+    source = Path(a.file).read_text(encoding="utf-8")
+    run = ctx.ecu_lab.run(source, a.profile, a.scenario, a.seed, lid)
+    if not run.build.ok:
+        print(run.build.log)
+        return 2
+    out = run.outcome
+    if not out.ok:
+        print(out.error)
+        return 2
+    r = out.result
+    print(f"{'PASS' if r.passed else 'FAIL'}  {r.scenario} on {r.profile}  CPU load {r.cpu_load:.1%}  "
+          f"watchdog services {r.wdg_services}  deadline misses {r.deadline_misses}")
+    for c in r.checks:
+        print(f"  {'ok ' if c.passed else 'FAIL'} {c.name}: {c.detail}")
+    for x in r.resets:
+        print(f"  reset at {x['time_ms']} ms: {x['reason']} - {x['detail']}")
+    for d in r.dem_log:
+        print(f"  DEM event {d['event_id']} -> {'FAILED' if d['status'] else 'PASSED'} at {d['time_ms']} ms")
+    res = run.build.resources
+    if res.available:
+        print(f"  host-compiled size (indicative): code {res.text} B, static RAM {res.static_ram} B")
+    if a.csv:
+        Path(a.csv).write_text(r.trace.to_csv(), encoding="utf-8")
+        print(f"  trace written to {a.csv}")
+    return 0 if r.passed else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ecsim", description="Embedded Controls Engineer Job Simulator (offline)")
     p.add_argument("--home", help="data directory (default $ECSIM_HOME or ~/.ecsim)")
@@ -172,12 +220,29 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="explicit request before attempting"); s.set_defaults(fn=cmd_solution)
     sub.add_parser("status", help="competency profile").set_defaults(fn=cmd_status)
     sub.add_parser("doctor", help="check optional toolchains").set_defaults(fn=cmd_doctor)
+    ecu = sub.add_parser("ecu", help="virtual ECU lab").add_subparsers(dest="ecu_cmd", required=True)
+    ecu.add_parser("profiles", help="list target profiles and scenarios").set_defaults(fn=cmd_ecu_profiles)
+    s = ecu.add_parser("run", help="build an application and run one scenario")
+    s.add_argument("file"); s.add_argument("--profile", default="CM4_GENERIC")
+    s.add_argument("--scenario", default="motor_nominal"); s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--csv", help="write the signal trace to a CSV file")
+    s.set_defaults(fn=cmd_ecu_run)
     s = sub.add_parser("backup", help="back up the database"); s.add_argument("dest"); s.set_defaults(fn=cmd_backup)
     s = sub.add_parser("restore", help="restore a backup"); s.add_argument("src"); s.set_defaults(fn=cmd_restore)
     return p
 
 
+def _utf8_stdout() -> None:
+    """Windows consoles/pipes may default to cp1252, which cannot print ±, ≥, µ, ✓."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass  # replaced stream (e.g. pytest capture) - already Unicode-capable
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_stdout()
     args = build_parser().parse_args(argv)
     ctx = bootstrap(args.home)
     try:

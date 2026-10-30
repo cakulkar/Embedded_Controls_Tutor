@@ -115,7 +115,7 @@ class ExerciseView(QWidget):
         else:
             self.input_stack.setCurrentIndex(2)
             self.code.setPlainText(last if last is not None else ex.spec["starter"])
-        self.reset_btn.setVisible(ex.kind == "c_function")
+        self.reset_btn.setVisible(ex.kind in ("c_function", "ecu_app"))
         self._refresh_state()
 
     def _refresh_state(self) -> None:
@@ -129,7 +129,7 @@ class ExerciseView(QWidget):
         self.status.setText(f"attempts: {st.attempts}   {badge}")
 
     def _reset_code(self) -> None:
-        if self.ex and self.ex.kind == "c_function":
+        if self.ex and self.ex.kind in ("c_function", "ecu_app"):
             self.code.setPlainText(self.ex.spec["starter"])
 
     def current_submission(self) -> str:
