@@ -7,11 +7,11 @@ controls engineer (automotive, agricultural, construction). It is **not** a
 tutorial website: every lesson is backed by graded engineering exercises, and
 competency is credited only for independent work.
 
-> **Status: Phase 2 of 15.** Learning engine, graders and competency scoring
-> (Phase 1) plus the **virtual ECU**: write motor-control firmware in C and run it
-> in closed loop against a simulated motor on a Cortex-M or AURIX TC3xx-style
-> target, with fault injection, watchdogs and resets. Ten screens still show which
-> phase delivers them. See `docs/PROGRESS.md`.
+> **Status: Phase 3 of 15. Model-based development first.** Controller *models* are
+> graded by MIL tests (requirements-based test vectors and closed loop with a plant) on
+> **real Simulink** (via the MATLAB Engine for Python) or on ECSim's own Simulink-semantics
+> engine, with the same tests either way. Also included: the virtual ECU (Phase 2) for running
+> firmware on Cortex-M / AURIX TC3xx-style targets. See `docs/ROADMAP.md` and `docs/PROGRESS.md`.
 
 ## Install
 
@@ -28,6 +28,19 @@ Windows C compiler: install MSYS2 and then `pacman -S mingw-w64-ucrt-x86_64-gcc`
 or use LLVM/Clang. Add its `bin` folder to `PATH`, then run `ecsim doctor` to
 confirm it is detected.
 
+## MATLAB/Simulink (optional)
+
+Learners with MATLAB + Simulink can submit their `.slx` models directly:
+
+```bash
+pip install matlabengine==<version matching your MATLAB release>   # e.g. 24.2.x for R2024b
+ecsim doctor                                   # shows matlab_engine: OK
+ecsim submit B02-E4 --file C:/work/speed_pi.slx
+```
+
+Tip: in MATLAB run `matlab.engine.shareEngine` first, and ECSim connects to that session instead of
+starting a new MATLAB each time. Without MATLAB, the same exercises accept ECSim model JSON.
+
 ## Run
 
 ```bash
@@ -43,6 +56,7 @@ ecsim solution A01-E3              # needs at least one attempt (--force overrid
 ecsim status                       # competency profile and track gaps
 ecsim backup ~/ecsim-backup.db  /  ecsim restore ~/ecsim-backup.db
 ecsim doctor                       # optional toolchains: gcc, cmake, gdb, cppcheck, scilab, omc, candump
+ecsim model check my_model.json   # compile: interface, sorted order, rates, warnings
 ecsim ecu profiles                 # virtual ECU targets and scenarios
 ecsim ecu run fw.c --profile TC3XX_LIKE --scenario motor_task_hang --csv trace.csv
 ```
@@ -53,7 +67,7 @@ leaves the machine.
 ## Test
 
 ```bash
-pytest                             # 111 tests: unit, integration, GUI (Qt offscreen)
+pytest                             # 172 tests: unit, integration, GUI (Qt offscreen)
 ```
 
 The suite compiles every C exercise's reference solution (it must pass), every
@@ -73,8 +87,9 @@ missing the low side".
 
 ## Extend: add content
 Add `src/ecsim/content/modules/<ID>_<name>.yaml` (copy an existing module). Supported
-exercise kinds are `numeric`, `choice`, `c_function` and `ecu_app` (firmware graded on the
-virtual ECU against scenarios in `ecsim/ecu/scenarios.py`). A `c_function` exercise needs
+exercise kinds are `numeric`, `choice`, `c_function`, `ecu_app` (firmware graded on the
+virtual ECU against scenarios in `ecsim/ecu/scenarios.py`) and `model_mil` (a controller model
+graded by MIL tests on the ECSim engine or Simulink). A `c_function` exercise needs
 `prototypes`, `starter`, `harness` (uses `CHECK`, `CHECK_EQ_U`, `CHECK_EQ_I`,
 `CHECK_NEAR`, `ECSIM_DONE()`), `reference` and ideally `mutants`. Then run
 `pytest`: content validation and the reference/mutant checks run automatically.

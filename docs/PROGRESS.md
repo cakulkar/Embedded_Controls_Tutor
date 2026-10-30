@@ -85,4 +85,35 @@ e.g. `task_10ms() crashed at t=20 ms`. CI now publishes failing tests as annotat
   DMA, bootloader/firmware update. They are scheduled with Phases 6 and 11, where
   CAN and UDS make bootloader flashing meaningful.
 
-## Next: Phase 3 — Control theory + Python/Xcos integration
+
+## Priority change (2026-10-29)
+Model-based development (MATLAB/Simulink) is now the core skill, and C is supporting. The roadmap
+was reordered (see ROADMAP.md): Phases 3–7 are MBD. Every MBD exercise runs on **real
+Simulink when installed** and on the **ECSim engine** otherwise.
+
+## Phase 3 — MBD core: model engine + MIL + Simulink backend — **DONE on branch (2026-10-29)**
+
+| Item | Status | Evidence |
+|---|---|---|
+| Block library (19 types) with Simulink semantics and Simulink equivalents | built | `test_block_semantics`, `test_integrators_*`, `test_transfer_function_and_rate_limiter` |
+| Compiler: feedthrough-aware sorted order, algebraic-loop detection with path | built | `test_sorted_order_*`, `test_algebraic_loop_reports_path` |
+| Sample times: inheritance, multiples of base step, multi-rate hold, rate-transition warning | built | `test_multirate_*`, `test_inherited_sample_time_*` |
+| Virtual subsystems (nested), actionable compile errors | built | `test_nested_subsystems_flatten`, `test_compile_errors_are_actionable` |
+| MIL harness: open-loop test vectors, closed loop with exact-ZOH DC motor, 4 check kinds | built | `test_discrete_motor_is_exact_zoh_of_plant`, `test_check_kinds` |
+| `model_mil` grader, backend auto-selection, interface/solver contract | built | `test_model_mil.py` |
+| Simulink backend (MATLAB Engine): load, ports, solver check, open-loop `sim`, generated closed-loop harness | **built, CI-tested with fakes; real-MATLAB run pending** | `test_engine_session_commands`, `test_simulink_backend_matches_ecsim_backend` |
+| Content B02: Simulink semantics, MIL, PI model practical (8 requirement checks, 4 mutants) | built | grader + parity tests |
+| GUI: model exercises in Academy with "Use Simulink model…"; CLI `model check`, `submit --file x.slx` | built | `test_model_exercise_in_academy`, `test_cli_model_check_and_slx_submit` |
+
+**Test totals:** 172 passed on Linux and in CI on `ubuntu-latest` and `windows-latest`.
+
+### Verification still needed on a machine with MATLAB
+1. `pip install matlabengine` (version matching the MATLAB release), then `ecsim doctor` shows `matlab_engine` available.
+2. Build `speed_pi.slx` per B02-E4 (In1 `speed_meas_rpm`, Out1 `voltage_cmd_V`, Fixed-step discrete 0.01).
+3. `ecsim submit B02-E4 --file speed_pi.slx`. Expected: 8/8 checks, with results matching the ECSim reference within rounding.
+Until this is done, the Simulink backend is labelled unverified.
+
+### Known limitations (Phase 3)
+- Learners without MATLAB author models as JSON until the Phase 4 editor lands.
+- Scalar doubles only; no buses, vectors or fixed-point yet.
+- Closed-loop plant library contains the DC motor only.

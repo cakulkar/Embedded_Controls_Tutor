@@ -71,10 +71,11 @@ def cmd_show(ctx: AppContext, a) -> int:
     if e.kind == "choice":
         for i, o in enumerate(e.spec["options"]):
             print(f"  [{i}] {o}")
-    if e.kind in ("c_function", "ecu_app"):
-        print("--- starter code (save to a file and submit with --file) ---")
+    if e.kind in ("c_function", "ecu_app", "model_mil"):
+        hint = "; Simulink users: --file model.slx" if e.kind == "model_mil" else ""
+        print(f"--- starter (save to a file and submit with --file{hint}) ---")
         print(e.spec["starter"])
-    st = ctx.learning.state(lid, e.id)
+    st =ctx.learning.state(lid, e.id)
     for i, h in enumerate(ctx.learning.revealed_hints(lid, e.id), 1):
         print(f"Hint {i}: {h}")
     print(f"\nattempts={st.attempts} hints={st.hints_revealed}/{st.hints_total} passed={st.passed}")
@@ -83,7 +84,9 @@ def cmd_show(ctx: AppContext, a) -> int:
 
 def cmd_submit(ctx: AppContext, a) -> int:
     lid = _learner(ctx, a.learner)
-    if a.file:
+    if a.file and Path(a.file).suffix.lower() in (".slx", ".mdl"):
+        text = str(Path(a.file).resolve())          # Simulink models are graded by path
+    elif a.file:
         text = Path(a.file).read_text(encoding="utf-8")
     elif a.answer is not None:
         text = a.answer
@@ -200,6 +203,23 @@ def cmd_ecu_run(ctx: AppContext, a) -> int:
     return 0 if r.passed else 1
 
 
+def cmd_model_check(ctx: AppContext, a) -> int:
+    from ecsim.model import ModelError, compile_model
+    try:
+        c = compile_model(Path(a.file).read_text(encoding="utf-8"))
+    except ModelError as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    print(f"Model '{c.name}': {len(c.blocks)} blocks (subsystems flattened), fixed step {c.step:g} s")
+    print(f"  inports : {c.inport_names}\n  outports: {c.outport_names}")
+    print("  sorted execution order: " + " → ".join(c.order))
+    rates = sorted({b.ts for b in c.blocks.values()})
+    print("  sample times: " + ", ".join(f"{r:g} s" for r in rates))
+    for w in c.warnings:
+        print(f"  warning: {w}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ecsim", description="Embedded Controls Engineer Job Simulator (offline)")
     p.add_argument("--home", help="data directory (default $ECSIM_HOME or ~/.ecsim)")
@@ -220,6 +240,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="explicit request before attempting"); s.set_defaults(fn=cmd_solution)
     sub.add_parser("status", help="competency profile").set_defaults(fn=cmd_status)
     sub.add_parser("doctor", help="check optional toolchains").set_defaults(fn=cmd_doctor)
+    mdl = sub.add_parser("model", help="model-based development tools").add_subparsers(dest="model_cmd", required=True)
+    s = mdl.add_parser("check", help="compile an ECSim model: interface, sorted order, rates, warnings")
+    s.add_argument("file"); s.set_defaults(fn=cmd_model_check)
     ecu = sub.add_parser("ecu", help="virtual ECU lab").add_subparsers(dest="ecu_cmd", required=True)
     ecu.add_parser("profiles", help="list target profiles and scenarios").set_defaults(fn=cmd_ecu_profiles)
     s = ecu.add_parser("run", help="build an application and run one scenario")

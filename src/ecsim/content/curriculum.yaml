@@ -15,19 +15,19 @@ competencies:
 departments:
   - {code: A, phase: 2,  title: "Embedded systems foundations", description: "C/C++, MCU architecture, peripherals, fixed-point, RTOS, watchdogs, bootloaders."}
   - {code: B, phase: 3,  title: "Control theory and model-based development", description: "Classical and modern control, discretisation, estimation, LUTs, anti-windup."}
-  - {code: C, phase: 8,  title: "Driveline controls", description: "Transmissions, clutch control, shift quality, torque coordination, AWD."}
-  - {code: D, phase: 8,  title: "Powertrain and engine controls", description: "Gasoline/diesel EMS, boost, aftertreatment, e-motor FOC, hybrids."}
-  - {code: E, phase: 7,  title: "Battery management systems", description: "ECMs, SOC/SOH/SOP, balancing, contactors, precharge, isolation."}
-  - {code: F, phase: 9,  title: "ADAS and autonomous vehicle controls", description: "Sensors, fusion, ACC, AEB, LKA, longitudinal/lateral control, fallbacks."}
-  - {code: G, phase: 9,  title: "Body controls", description: "BCM functions, lighting, HVAC, wipers, sleep/wake, DTCs."}
-  - {code: H, phase: 10, title: "Agricultural and construction equipment controls", description: "PTO, hitch, hydraulics, sprayers, ISOBUS, excavators, load sensing, anti-stall."}
-  - {code: I, phase: 6,  title: "Automotive communication and diagnostics", description: "CAN/CAN FD/LIN/Ethernet, J1939, ISOBUS, UDS, OBD-II, DBC/A2L/XCP."}
-  - {code: J, phase: 11, title: "AUTOSAR and software architecture", description: "Classic/Adaptive AUTOSAR, RTE, BSW, ports, ARXML, integration."}
-  - {code: K, phase: 11, title: "Functional safety and cybersecurity", description: "ISO 26262 concepts, HARA, FMEA/FTA, ISO 25119/19014 applicability, ISO/SAE 21434 fundamentals."}
-  - {code: L, phase: 12, title: "Calibration, testing and validation", description: "MIL/SIL/PIL/HIL, test design, coverage, calibration, root cause."}
-  - {code: M, phase: 12, title: "Engineering tools and workflows", description: "Open-source substitutes for industry tools and their limits."}
-  - {code: N, phase: 12, title: "Industry Readiness Bridge", description: "Translate solutions into Simulink/Stateflow/Embedded Coder/CANape/INCA/DOORS/dSPACE concepts."}
-  - {code: P, phase: 14, title: "Career preparation and interview simulator", description: "Technical interviews with follow-ups and honest project narratives."}
+  - {code: C, phase: 10,  title: "Driveline controls", description: "Transmissions, clutch control, shift quality, torque coordination, AWD."}
+  - {code: D, phase: 10,  title: "Powertrain and engine controls", description: "Gasoline/diesel EMS, boost, aftertreatment, e-motor FOC, hybrids."}
+  - {code: E, phase: 9,  title: "Battery management systems", description: "ECMs, SOC/SOH/SOP, balancing, contactors, precharge, isolation."}
+  - {code: F, phase: 11,  title: "ADAS and autonomous vehicle controls", description: "Sensors, fusion, ACC, AEB, LKA, longitudinal/lateral control, fallbacks."}
+  - {code: G, phase: 11,  title: "Body controls", description: "BCM functions, lighting, HVAC, wipers, sleep/wake, DTCs."}
+  - {code: H, phase: 12, title: "Agricultural and construction equipment controls", description: "PTO, hitch, hydraulics, sprayers, ISOBUS, excavators, load sensing, anti-stall."}
+  - {code: I, phase: 8,  title: "Automotive communication and diagnostics", description: "CAN/CAN FD/LIN/Ethernet, J1939, ISOBUS, UDS, OBD-II, DBC/A2L/XCP."}
+  - {code: J, phase: 13, title: "AUTOSAR and software architecture", description: "Classic/Adaptive AUTOSAR, RTE, BSW, ports, ARXML, integration."}
+  - {code: K, phase: 13, title: "Functional safety and cybersecurity", description: "ISO 26262 concepts, HARA, FMEA/FTA, ISO 25119/19014 applicability, ISO/SAE 21434 fundamentals."}
+  - {code: L, phase: 14, title: "Calibration, testing and validation", description: "MIL/SIL/PIL/HIL, test design, coverage, calibration, root cause."}
+  - {code: M, phase: 14, title: "Engineering tools and workflows", description: "Open-source substitutes for industry tools and their limits."}
+  - {code: N, phase: 14, title: "Industry Readiness Bridge", description: "Translate solutions into Simulink/Stateflow/Embedded Coder/CANape/INCA/DOORS/dSPACE concepts."}
+  - {code: P, phase: 15, title: "Career preparation and interview simulator", description: "Technical interviews with follow-ups and honest project narratives."}
 
 # Track requirement string order: EMB CTL MBD VEH COM ARC FUS TST DOC
 # b=beginner i=intermediate a=advanced e=expert -=none

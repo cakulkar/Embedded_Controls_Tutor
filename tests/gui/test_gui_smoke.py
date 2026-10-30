@@ -102,3 +102,17 @@ def test_ecu_lab_screen(win, ctx):
     lab.code.setPlainText("void app_init(void) { int x; }")
     lab.run()
     assert "Build failed" in lab.summary.text() and "your_app.c" in lab.log.toPlainText()
+
+
+def test_model_exercise_in_academy(win, ctx):
+    academy = win.show_screen("Learning Academy")
+    academy.select("B02-E4")
+    ev = academy.exercise_view
+    assert ev.slx_btn.isVisibleTo(ev) and '"format": "ecsim-model"' in ev.code.toPlainText()
+    ev.submit()
+    assert "FAIL" in ev.feedback.toPlainText() and "REQ-1" in ev.feedback.toPlainText()
+    ev.code.setPlainText(ctx.catalog.exercise("B02-E4").spec["reference"])
+    ev.submit()
+    assert "8/8 checks passed" in ev.feedback.toPlainText()
+    academy.select("B01-E1")
+    assert not ev.slx_btn.isVisibleTo(ev)

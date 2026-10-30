@@ -1,0 +1,1003 @@
+# Generated from verified models; edit freely, then run pytest.
+id: B02
+department: B
+title: 'Model-based development: Simulink semantics and MIL'
+ordinal: 2
+version: '1'
+lessons:
+- id: B02-L1
+  title: Simulink execution semantics you must know
+  body: |
+    # How a discrete Simulink model executes
+
+    Model-based development (MBD) teams spend most of their time in a handful of execution rules.
+    ECSim's engine follows the same rules, so what you learn here transfers directly.
+
+    ### Solver and sample times
+    Production controller models use a **Fixed-step, discrete** solver: the model is
+    evaluated at `t = k·Ts` and has no continuous states. Every block has a **sample time**:
+
+    | Setting | Meaning |
+    |---|---|
+    | `-1` | **inherited** from the blocks that drive it (most blocks) |
+    | `0.01` | runs every 10 ms (must be an integer multiple of the base step) |
+    | `inf` (Simulink) | constant; ECSim treats constants at the base rate |
+
+    Mixing rates without a **Rate Transition** block is a classic integration defect. ECSim
+    warns about it, and Simulink can be configured to error.
+
+    ### Sorted order and direct feedthrough
+    Each step, Simulink computes block **outputs** in a *sorted order*, then updates **states**.
+    A block has **direct feedthrough** if its output at step k depends on its input at step k
+    (Gain, Sum, Saturation). Unit Delay and a Forward-Euler Discrete-Time Integrator do **not**:
+    their output comes from state only.
+
+    A cycle made only of feedthrough blocks has no valid sorted order. That is an **algebraic loop**.
+    In a discrete controller it is almost always a modelling error. Break it with a Unit Delay.
+
+    ### ECSim ↔ Simulink block names
+    | ECSim `type` | Simulink block |
+    |---|---|
+    | Inport / Outport | In1 / Out1 |
+    | Constant, Gain, Sum (`signs`), Product (`ops`) | Constant, Gain, Sum (List of signs), Product |
+    | Saturation, RateLimiter | Saturation, Rate Limiter |
+    | UnitDelay, DiscreteIntegrator, DiscreteTransferFcn | Unit Delay, Discrete-Time Integrator, Discrete Transfer Fcn |
+    | RelationalOperator, LogicalOperator, Switch | Relational Operator, Logical Operator, Switch |
+    | Lookup1D | 1-D Lookup Table |
+    | Subsystem | Subsystem (virtual) |
+
+    ### Current ECSim engine limits (this phase)
+    Scalar double signals only (vectors, buses and fixed-point types come in Phases 4 and 6), and
+    no continuous blocks inside models. Plants run outside the model, as in a MIL harness.
+- id: B02-L2
+  title: MIL testing with requirements-based test vectors
+  body: |
+    # Model-in-the-loop testing
+
+    **MIL** runs the controller *model* (not code) against stimuli and checks the response
+    against requirements. Two forms are used everywhere:
+
+    * **Open-loop test vectors:** drive the model inputs with defined signals (steps, ramps),
+      and check outputs against limits derived from requirements. This is what a Simulink Test
+      harness for a unit model typically does.
+    * **Closed-loop MIL:** connect the model to a plant model and check system behaviour.
+
+    Each check traces to a requirement ID. A failing check names the requirement, the
+    value and the time, so you can find the defect without guessing.
+
+    ### Two ways to submit the same exercise
+    | You have | Submit | Graded by |
+    |---|---|---|
+    | MATLAB + Simulink + MATLAB Engine for Python | the **path** to your `.slx` file | real Simulink via `sim` |
+    | no MATLAB | the ECSim model JSON (Phase 4 adds a graphical editor) | ECSim engine |
+
+    Both run the **same tests with the same checks**. In closed loop, both use the identical
+    discrete plant: the DC motor is discretised exactly (zero-order hold) at your model's step.
+
+    ### Contract for Simulink models
+    1. Root **Inport/Outport block names and order** exactly as in the exercise interface.
+    2. *Model Settings → Solver:* **Fixed-step**, **discrete (no continuous states)**, fixed step = the exercise step (a number, not `auto`).
+    3. File name = model name (e.g. `speed_pi.slx`); it must be a valid MATLAB identifier.
+    4. The closed-loop tests reference your model from a generated harness (Model block), so the model must be referenceable. A plain discrete controller model is.
+- id: B02-L3
+  title: Modelling a PI controller with anti-windup
+  body: |
+    # The PI as a model
+
+    ```
+    setpoint ──(+)── e ──► Kp ───────────────┐
+                (−)        │                 (+)──► Saturation [0, 24 V] ──► voltage_cmd_V
+     speed_meas ┘          └──► Discrete-Time Integrator (gain Ki, limits 0…24) ──┘
+    ```
+
+    * Use the gains you designed in B01 (pole-zero cancellation): `Kp = τ/(K·τ_cl)`, `Ki = Kp/τ`.
+    * **Anti-windup in Simulink:** the simplest robust form is to *limit the integrator*
+      (Discrete-Time Integrator → "Limit output") to the actuator range. The Discrete PID
+      Controller block also offers *clamping* and *back-calculation* anti-windup.
+    * Forward Euler integration keeps the integrator free of direct feedthrough, so the loop
+      through the plant never forms an algebraic loop.
+
+    In the B02-E4 tests:
+    * **REQ-4** catches a missing anti-windup.
+    * **REQ-2** catches a missing output saturation.
+    * **REQ-1 / REQ-8** catch a missing or weak integral action.
+exercises:
+- id: B02-E1
+  kind: choice
+  title: Breaking an algebraic loop
+  competency: MBD
+  level: beginner
+  points: 10
+  prompt: |
+    Your model reports an algebraic loop: `Sum → Gain → Sum`. Which change is the standard fix in a discrete controller model?
+  spec:
+    options:
+    - Switch the solver to variable-step so Simulink can iterate.
+    - Insert a Unit Delay (or use a block without direct feedthrough) in the loop.
+    - Add a second Gain block in series.
+    - Set every block's sample time to -1.
+    correct:
+    - 1
+  hints:
+  - Which blocks have no direct feedthrough?
+  solution: |
+    **Insert a Unit Delay.** It has no direct feedthrough, so the cycle gets a valid sorted order. In code this is the explicit 'value from the previous step' you would write anyway. Variable-step solving of algebraic loops is slow, and it is not code-generation friendly.
+- id: B02-E2
+  kind: choice
+  title: Inherited sample time
+  competency: MBD
+  level: beginner
+  points: 10
+  prompt: |
+    A Gain block has sample time `-1` and is driven by an Inport sampled at 10 ms and a block at 100 ms through a Sum. At what rate does the Sum run?
+  spec:
+    options:
+    - 100 ms (slowest input).
+    - 10 ms (fastest input).
+    - Continuously.
+    - It is an error; -1 is not allowed.
+    correct:
+    - 1
+  hints:
+  - Inheritance picks the rate that does not lose information from any input.
+  solution: |
+    **10 ms.** An inherited sample time takes the fastest driving rate. The 100 ms signal is held between its hits, which is a rate transition that should be explicit (Rate Transition block).
+- id: B02-E3
+  kind: numeric
+  title: Forward-Euler integrator output
+  competency: MBD
+  level: beginner
+  points: 10
+  prompt: |
+    A Discrete-Time Integrator (Forward Euler, gain K = 2, initial condition 0, sample time 0.01 s) receives a constant input of 5. What is its **output** at t = 0.03 s?
+  spec:
+    answer: 0.3
+    abs_tol: 1.0e-09
+  hints:
+  - 'Forward Euler: y(k) = x(k), then x(k+1) = x(k) + K·T·u(k).'
+  - Write out k = 0, 1, 2, 3.
+  solution: |
+    x(0)=0 → y(0)=0; x(1)=0.1; x(2)=0.2; x(3)=0.3, so **y(0.03 s) = 0.3**. The output lags the input by one step, which is why there is no direct feedthrough.
+- id: B02-E4
+  kind: model_mil
+  title: PI speed controller model (MIL)
+  competency: MBD
+  level: intermediate
+  points: 40
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    Build the **speed controller model** for Engineering Task #001 and pass its MIL tests.
+
+    **Interface** (exact names and order):
+
+    | | Name | Unit |
+    |---|---|---|
+    | Inport 1 | `speed_meas_rpm` | rpm |
+    | Outport 1 | `voltage_cmd_V` | V |
+
+    Fixed-step discrete solver, **step 0.01 s**. Setpoint: 3000 rpm (Constant inside the model).
+
+    **Requirements:**
+
+    | ID | Requirement |
+    |---|---|
+    | REQ-1 | In closed loop, speed within 3000 ± 60 rpm from t = 1.0 s |
+    | REQ-2 | Command always within 0 … 24 V |
+    | REQ-3 | A persistent large positive error drives the command to 24 V |
+    | REQ-4 | When the error reverses, the command leaves 24 V within 50 ms (anti-windup) |
+    | REQ-5 | Zero error gives zero command (no drift) |
+    | REQ-6 | Speed below setpoint gives a positive command immediately |
+    | REQ-7 | Overshoot ≤ 10 % |
+    | REQ-8 | After a 0.03 N·m load step, back within ± 60 rpm in 0.5 s |
+
+    **Plant:** DC motor, K ≈ 317 rpm/V, τ ≈ 55 ms (same as B01/A05).
+
+    **Submit either:**
+    * the path to your Simulink model, e.g. `C:\work\speed_pi.slx` (needs MATLAB + the MATLAB Engine for Python), or
+    * an ECSim model in JSON. The starter shows the format: replace the placeholder Constant with your controller.
+  spec:
+    interface:
+      inports:
+      - speed_meas_rpm
+      outports:
+      - voltage_cmd_V
+      step: 0.01
+    tests:
+    - name: OL1 saturation and anti-windup
+      type: open_loop
+      duration: 1.5
+      inputs:
+        speed_meas_rpm:
+          step:
+            t: 1.0
+            before: 0
+            after: 4000
+      checks:
+      - name: REQ-2 command within 0…24 V
+        kind: within
+        signal: voltage_cmd_V
+        min: 0
+        max: 24
+      - name: REQ-3 large error drives full command
+        kind: near
+        signal: voltage_cmd_V
+        target: 24
+        tol: 0.001
+        from: 0.5
+        to: 0.99
+      - name: REQ-4 leaves saturation within 50 ms of error reversal
+        kind: below_by
+        signal: voltage_cmd_V
+        value: 23.99
+        by: 1.05
+        from: 1.0
+    - name: OL2 zero error, no drift
+      type: open_loop
+      duration: 2.0
+      inputs:
+        speed_meas_rpm:
+          const: 3000
+      checks:
+      - name: REQ-5 no command without error
+        kind: near
+        signal: voltage_cmd_V
+        target: 0
+        tol: 1.0e-06
+    - name: OL3 command sign
+      type: open_loop
+      duration: 0.1
+      inputs:
+        speed_meas_rpm:
+          const: 2900
+      checks:
+      - name: REQ-6 below setpoint gives positive command at t = 0
+        kind: at
+        signal: voltage_cmd_V
+        t: 0.0
+        min: 0.01
+    - name: CL1 closed loop, nominal
+      type: closed_loop
+      duration: 3.0
+      checks:
+      - name: REQ-1 speed 3000 ± 60 rpm from 1.0 s
+        kind: near
+        signal: speed_rpm
+        target: 3000
+        tol: 60
+        from: 1.0
+      - name: REQ-7 overshoot ≤ 10 %
+        kind: within
+        signal: speed_rpm
+        max: 3300
+    - name: CL2 closed loop, load step 0.03 N·m at 1.5 s
+      type: closed_loop
+      duration: 3.0
+      load_torque:
+        step:
+          t: 1.5
+          before: 0
+          after: 0.03
+      checks:
+      - name: REQ-8 recovers to 3000 ± 60 rpm within 0.5 s
+        kind: near
+        signal: speed_rpm
+        target: 3000
+        tol: 60
+        from: 2.0
+    starter: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "todo",
+            "type": "Constant",
+            "params": {
+              "value": 0
+            }
+          },
+          {
+            "id": "unused",
+            "type": "Terminator"
+          }
+        ],
+        "lines": [
+          {
+            "src": "todo:1",
+            "dst": "voltage_cmd_V:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "unused:1"
+          }
+        ]
+      }
+    reference: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "setpoint",
+            "type": "Constant",
+            "params": {
+              "value": 3000
+            }
+          },
+          {
+            "id": "error",
+            "type": "Sum",
+            "params": {
+              "signs": "+-"
+            }
+          },
+          {
+            "id": "Kp",
+            "type": "Gain",
+            "params": {
+              "gain": 0.00174
+            }
+          },
+          {
+            "id": "integrator",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0316,
+              "initial": 0,
+              "method": "ForwardEuler",
+              "upper": 24,
+              "lower": 0
+            }
+          },
+          {
+            "id": "pi_sum",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            }
+          },
+          {
+            "id": "v_limit",
+            "type": "Saturation",
+            "params": {
+              "upper": 24,
+              "lower": 0
+            }
+          }
+        ],
+        "lines": [
+          {
+            "src": "setpoint:1",
+            "dst": "error:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "error:2"
+          },
+          {
+            "src": "error:1",
+            "dst": "Kp:1"
+          },
+          {
+            "src": "error:1",
+            "dst": "integrator:1"
+          },
+          {
+            "src": "Kp:1",
+            "dst": "pi_sum:1"
+          },
+          {
+            "src": "integrator:1",
+            "dst": "pi_sum:2"
+          },
+          {
+            "src": "pi_sum:1",
+            "dst": "v_limit:1"
+          },
+          {
+            "src": "v_limit:1",
+            "dst": "voltage_cmd_V:1"
+          }
+        ]
+      }
+    mutants:
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "setpoint",
+            "type": "Constant",
+            "params": {
+              "value": 3000
+            }
+          },
+          {
+            "id": "error",
+            "type": "Sum",
+            "params": {
+              "signs": "+-"
+            }
+          },
+          {
+            "id": "Kp",
+            "type": "Gain",
+            "params": {
+              "gain": 0.00174
+            }
+          },
+          {
+            "id": "integrator",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0,
+              "initial": 0,
+              "method": "ForwardEuler",
+              "upper": 24,
+              "lower": 0
+            }
+          },
+          {
+            "id": "pi_sum",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            }
+          },
+          {
+            "id": "v_limit",
+            "type": "Saturation",
+            "params": {
+              "upper": 24,
+              "lower": 0
+            }
+          }
+        ],
+        "lines": [
+          {
+            "src": "setpoint:1",
+            "dst": "error:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "error:2"
+          },
+          {
+            "src": "error:1",
+            "dst": "Kp:1"
+          },
+          {
+            "src": "error:1",
+            "dst": "integrator:1"
+          },
+          {
+            "src": "Kp:1",
+            "dst": "pi_sum:1"
+          },
+          {
+            "src": "integrator:1",
+            "dst": "pi_sum:2"
+          },
+          {
+            "src": "pi_sum:1",
+            "dst": "v_limit:1"
+          },
+          {
+            "src": "v_limit:1",
+            "dst": "voltage_cmd_V:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "setpoint",
+            "type": "Constant",
+            "params": {
+              "value": 3000
+            }
+          },
+          {
+            "id": "error",
+            "type": "Sum",
+            "params": {
+              "signs": "+-"
+            }
+          },
+          {
+            "id": "Kp",
+            "type": "Gain",
+            "params": {
+              "gain": 0.00174
+            }
+          },
+          {
+            "id": "integrator",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0316,
+              "initial": 0,
+              "method": "ForwardEuler"
+            }
+          },
+          {
+            "id": "pi_sum",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            }
+          },
+          {
+            "id": "v_limit",
+            "type": "Saturation",
+            "params": {
+              "upper": 24,
+              "lower": 0
+            }
+          }
+        ],
+        "lines": [
+          {
+            "src": "setpoint:1",
+            "dst": "error:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "error:2"
+          },
+          {
+            "src": "error:1",
+            "dst": "Kp:1"
+          },
+          {
+            "src": "error:1",
+            "dst": "integrator:1"
+          },
+          {
+            "src": "Kp:1",
+            "dst": "pi_sum:1"
+          },
+          {
+            "src": "integrator:1",
+            "dst": "pi_sum:2"
+          },
+          {
+            "src": "pi_sum:1",
+            "dst": "v_limit:1"
+          },
+          {
+            "src": "v_limit:1",
+            "dst": "voltage_cmd_V:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "setpoint",
+            "type": "Constant",
+            "params": {
+              "value": 3000
+            }
+          },
+          {
+            "id": "error",
+            "type": "Sum",
+            "params": {
+              "signs": "+-"
+            }
+          },
+          {
+            "id": "Kp",
+            "type": "Gain",
+            "params": {
+              "gain": 0.00174
+            }
+          },
+          {
+            "id": "integrator",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0316,
+              "initial": 0,
+              "method": "ForwardEuler",
+              "upper": 24,
+              "lower": 0
+            }
+          },
+          {
+            "id": "pi_sum",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            }
+          },
+          {
+            "id": "v_limit",
+            "type": "Saturation",
+            "params": {
+              "upper": 1000000000.0,
+              "lower": -1000000000.0
+            }
+          }
+        ],
+        "lines": [
+          {
+            "src": "setpoint:1",
+            "dst": "error:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "error:2"
+          },
+          {
+            "src": "error:1",
+            "dst": "Kp:1"
+          },
+          {
+            "src": "error:1",
+            "dst": "integrator:1"
+          },
+          {
+            "src": "Kp:1",
+            "dst": "pi_sum:1"
+          },
+          {
+            "src": "integrator:1",
+            "dst": "pi_sum:2"
+          },
+          {
+            "src": "pi_sum:1",
+            "dst": "v_limit:1"
+          },
+          {
+            "src": "v_limit:1",
+            "dst": "voltage_cmd_V:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "speed_pi",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "speed_meas_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "speed_meas_rpm"
+            }
+          },
+          {
+            "id": "voltage_cmd_V",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "voltage_cmd_V"
+            }
+          },
+          {
+            "id": "setpoint",
+            "type": "Constant",
+            "params": {
+              "value": 3000
+            }
+          },
+          {
+            "id": "error",
+            "type": "Sum",
+            "params": {
+              "signs": "-+"
+            }
+          },
+          {
+            "id": "Kp",
+            "type": "Gain",
+            "params": {
+              "gain": 0.00174
+            }
+          },
+          {
+            "id": "integrator",
+            "type": "DiscreteIntegrator",
+            "params": {
+              "gain": 0.0316,
+              "initial": 0,
+              "method": "ForwardEuler",
+              "upper": 24,
+              "lower": 0
+            }
+          },
+          {
+            "id": "pi_sum",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            }
+          },
+          {
+            "id": "v_limit",
+            "type": "Saturation",
+            "params": {
+              "upper": 24,
+              "lower": 0
+            }
+          }
+        ],
+        "lines": [
+          {
+            "src": "setpoint:1",
+            "dst": "error:1"
+          },
+          {
+            "src": "speed_meas_rpm:1",
+            "dst": "error:2"
+          },
+          {
+            "src": "error:1",
+            "dst": "Kp:1"
+          },
+          {
+            "src": "error:1",
+            "dst": "integrator:1"
+          },
+          {
+            "src": "Kp:1",
+            "dst": "pi_sum:1"
+          },
+          {
+            "src": "integrator:1",
+            "dst": "pi_sum:2"
+          },
+          {
+            "src": "pi_sum:1",
+            "dst": "v_limit:1"
+          },
+          {
+            "src": "v_limit:1",
+            "dst": "voltage_cmd_V:1"
+          }
+        ]
+      }
+  hints:
+  - 'Reuse your B01 design: Kp = 0.055/(317·0.1) V/rpm, Ki = Kp/τ. Error = setpoint − measurement.'
+  - 'Which requirement fails? REQ-4 means windup: limit the integrator to the actuator range.'
+  - 'Order matters for REQ-6: the proportional path must act at t = 0, so it must not go through a delay.'
+  solution: |
+    Reference structure: Constant(3000) → Sum(+−) → Gain(Kp = 0.00174) and Discrete-Time Integrator
+    (Forward Euler, gain Ki = 0.0316, limits 0…24) → Sum(++) → Saturation(0…24) → Outport.
+
+    **In Simulink:** same blocks, In1 `speed_meas_rpm`, Out1 `voltage_cmd_V`, Discrete-Time Integrator with
+    *Limit output* 0/24, Solver *Fixed-step discrete* 0.01, saved as `speed_pi.slx`.
+
+    ECSim JSON of the reference:
+
+    ```json
+    {
+      "format": "ecsim-model",
+      "version": 1,
+      "name": "speed_pi",
+      "solver": {
+        "type": "FixedStepDiscrete",
+        "step": 0.01
+      },
+      "blocks": [
+        {
+          "id": "speed_meas_rpm",
+          "type": "Inport",
+          "params": {
+            "port": 1,
+            "name": "speed_meas_rpm"
+          }
+        },
+        {
+          "id": "voltage_cmd_V",
+          "type": "Outport",
+          "params": {
+            "port": 1,
+            "name": "voltage_cmd_V"
+          }
+        },
+        {
+          "id": "setpoint",
+          "type": "Constant",
+          "params": {
+            "value": 3000
+          }
+        },
+        {
+          "id": "error",
+          "type": "Sum",
+          "params": {
+            "signs": "+-"
+          }
+        },
+        {
+          "id": "Kp",
+          "type": "Gain",
+          "params": {
+            "gain": 0.00174
+          }
+        },
+        {
+          "id": "integrator",
+          "type": "DiscreteIntegrator",
+          "params": {
+            "gain": 0.0316,
+            "initial": 0,
+            "method": "ForwardEuler",
+            "upper": 24,
+            "lower": 0
+          }
+        },
+        {
+          "id": "pi_sum",
+          "type": "Sum",
+          "params": {
+            "signs": "++"
+          }
+        },
+        {
+          "id": "v_limit",
+          "type": "Saturation",
+          "params": {
+            "upper": 24,
+            "lower": 0
+          }
+        }
+      ],
+      "lines": [
+        {
+          "src": "setpoint:1",
+          "dst": "error:1"
+        },
+        {
+          "src": "speed_meas_rpm:1",
+          "dst": "error:2"
+        },
+        {
+          "src": "error:1",
+          "dst": "Kp:1"
+        },
+        {
+          "src": "error:1",
+          "dst": "integrator:1"
+        },
+        {
+          "src": "Kp:1",
+          "dst": "pi_sum:1"
+        },
+        {
+          "src": "integrator:1",
+          "dst": "pi_sum:2"
+        },
+        {
+          "src": "pi_sum:1",
+          "dst": "v_limit:1"
+        },
+        {
+          "src": "v_limit:1",
+          "dst": "voltage_cmd_V:1"
+        }
+      ]
+    }
+    ```
