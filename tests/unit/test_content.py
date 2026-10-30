@@ -49,7 +49,7 @@ def _copy(tmp_path):
 def test_bad_weights_rejected(tmp_path):
     d = _copy(tmp_path)
     p = d / "curriculum.yaml"
-    p.write_text(p.read_text().replace("weight: 0.05", "weight: 0.06"))
+    p.write_text(p.read_text(encoding="utf-8").replace("weight: 0.05", "weight: 0.06"), encoding="utf-8")
     with pytest.raises(ContentError, match="weights"):
         load_catalog(d)
 
@@ -57,7 +57,7 @@ def test_bad_weights_rejected(tmp_path):
 def test_duplicate_id_rejected(tmp_path):
     d = _copy(tmp_path)
     src = d / "modules" / "A02_fixed_point_adc.yaml"
-    (d / "modules" / "Z99_dup.yaml").write_text(src.read_text())
+    (d / "modules" / "Z99_dup.yaml").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     with pytest.raises(ContentError, match="duplicate"):
         load_catalog(d)
 
@@ -65,6 +65,6 @@ def test_duplicate_id_rejected(tmp_path):
 def test_unknown_competency_rejected(tmp_path):
     d = _copy(tmp_path)
     p = d / "modules" / "A02_fixed_point_adc.yaml"
-    p.write_text(p.read_text().replace("competency: VEH", "competency: XYZ", 1))
+    p.write_text(p.read_text(encoding="utf-8").replace("competency: VEH", "competency: XYZ", 1), encoding="utf-8")
     with pytest.raises(ContentError, match="unknown competency"):
         load_catalog(d)

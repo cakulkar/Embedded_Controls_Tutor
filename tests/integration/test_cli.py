@@ -55,6 +55,6 @@ def test_cli_c_submission(tmp_path, capsys):
     from ecsim.learning.content import load_catalog
     run(tmp_path, "init", "--name", "Ana", capsys=capsys)
     src = tmp_path / "pi.c"
-    src.write_text(load_catalog(CONTENT_DIR).exercise("B01-E4").spec["reference"])
+    src.write_text(load_catalog(CONTENT_DIR).exercise("B01-E4").spec["reference"], encoding="utf-8")
     code, out = run(tmp_path, "submit", "B01-E4", "--file", str(src), capsys=capsys)
     assert code == 0 and "13/13" in out

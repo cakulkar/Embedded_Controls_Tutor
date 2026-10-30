@@ -63,13 +63,14 @@ class CFunctionGrader:
         prototypes = spec["prototypes"]
         with tempfile.TemporaryDirectory(prefix="ecsim_c_") as tmp:
             d = Path(tmp)
-            (d / "learner.c").write_text(PRELUDE + prototypes + "\n#line 1 \"your_code.c\"\n" + submission + "\n")
-            (d / "harness.c").write_text(PRELUDE + TEST_HEADER + prototypes + "\n" + spec["harness"])
+            (d / "learner.c").write_text(PRELUDE + prototypes + "\n#line 1 \"your_code.c\"\n" + submission + "\n", encoding="utf-8")
+            (d / "harness.c").write_text(PRELUDE + TEST_HEADER + prototypes + "\n" + spec["harness"], encoding="utf-8")
             exe = d / "test.bin"
             # Learner file gets strict flags; the harness is ours and is built with the same flags.
             cc = [self.compiler, *CFLAGS, "learner.c", "harness.c", "-lm", "-o", str(exe)]
             try:
-                build = subprocess.run(cc, cwd=d, capture_output=True, text=True, timeout=60)
+                build = subprocess.run(cc, cwd=d, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace", timeout=60)
             except subprocess.TimeoutExpired:
                 return GradeResult(False, 0.0, "Compilation timed out.")
             if build.returncode != 0:
@@ -80,7 +81,8 @@ class CFunctionGrader:
                     {"stage": "compile"},
                 )
             try:
-                run = subprocess.run([str(exe)], cwd=d, capture_output=True, text=True, timeout=self.timeout_s)
+                run = subprocess.run([str(exe)], cwd=d, capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", timeout=self.timeout_s)
             except subprocess.TimeoutExpired:
                 return GradeResult(False, 0.0, f"Tests exceeded {self.timeout_s:g} s - infinite loop?", {"stage": "run"})
         out = run.stdout

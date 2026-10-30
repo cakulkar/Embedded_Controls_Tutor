@@ -36,7 +36,8 @@ def probe_one(name: str) -> ToolStatus:
         version = None
         if vargs:
             try:
-                out = subprocess.run([path, *vargs], capture_output=True, text=True, timeout=5)
+                out = subprocess.run([path, *vargs], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", timeout=5)
                 text = (out.stdout or out.stderr).strip().splitlines()
                 version = text[0] if text else None
             except (OSError, subprocess.TimeoutExpired):
