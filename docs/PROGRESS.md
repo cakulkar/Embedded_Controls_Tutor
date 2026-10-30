@@ -199,3 +199,18 @@ requirements tool.
 
 Not yet: CAN on the virtual ECU (mailboxes, cyclic TX, RX timeout scenario), CAN FD/LIN/Ethernet labs,
 XCP/A2L (planned with calibration, Phase 14), multiplexed DBC signals.
+
+## Phase 9 — BMS & electric powertrain — **DONE (2026-10-30)**
+
+| Item | Evidence |
+|---|---|
+| Li-ion cell plant: Thevenin 1RC (exact per-step RC solution), OCV table, coulomb counting, lumped thermal model | `test_battery.py` (hand calculations: ΔSOC, I·R0, I·R1 steady state, relaxation) |
+| HV precharge circuit plant (RC charge, open-resistor fault, bleed) | `test_precharge_reaches_95_percent_after_3_tau`, `test_open_resistor_never_charges_and_link_bleeds` |
+| Harness: `plant_driven` tests (plant pre-simulated, sensor offset injected, truth and error signals), `samples` signal (zero-order hold) | `test_plant_driven_inputs_include_offset_and_truth`, `test_samples_signal_holds_last_value` |
+| Closed-loop precharge harness on both backends (ECSim; Simulink harness from standard blocks: Unit Delay, Switch, Gain) | `test_backend_parity[E01-E6]`, `test_simulink_precharge_harness_script` |
+| Vehicle & Machine Simulator screen: DC motor, battery cell, precharge scenarios with validated parameters | `test_plant_simulator_screen`, `test_every_scenario_runs_with_defaults_and_is_well_formed` |
+| Content E01: ECM/OCV, SOC estimation, precharge/contactors/protection; 3 numeric, 1 choice, 2 MIL practicals (SOC estimator robust to a 2 A sensor offset, 6 mutants incl. the offset-blind rest threshold; contactor sequencer chart, 5 mutants incl. fixed-time precharge) | `test_content_models.py` |
+
+The Simulink precharge harness is checked for its command sequence and, through the stand-in session,
+for identical results; it has not yet been run in a real MATLAB session. Not yet: cell balancing
+exercise, multi-cell pack, inverter/e-motor FOC plant (FOC theory is in C-department lessons).

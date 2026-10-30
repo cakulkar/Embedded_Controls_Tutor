@@ -23,6 +23,10 @@ from ecsim.plants.dc_motor import RPM_PER_RADS, DcMotor, DcMotorParams
 
 
 def signal_value(spec: dict, t: float) -> float:
+    if "samples" in spec:                               # zero-order hold of pre-computed samples
+        k = math.floor(t / float(spec["dt"]) + 1e-9)
+        vals = spec["samples"]
+        return float(vals[min(max(k, 0), len(vals) - 1)])
     if "const" in spec:
         return float(spec["const"])
     if "step" in spec:
@@ -166,6 +170,30 @@ class MilReport:
         return "\n".join(lines)
 
 
+def plant_driven_inputs(test: dict, step: float) -> tuple[dict, dict]:
+    """Pre-simulate a plant that does not depend on the model output.
+
+    Returns (open-loop input signals for the model, truth signals for the trace)."""
+    if test.get("plant") != "battery_cell":
+        raise ModelError(f"unknown plant-driven plant {test.get('plant')!r}")
+    from ecsim.plants.battery import Cell
+    pp = test.get("plant_params", {})
+    cell = Cell(soc=float(pp.get("soc0", 0.8)), temp=float(pp.get("t0", 25.0)))
+    offset = float(pp.get("current_offset_A", 0.0))
+    n = n_samples(float(test["duration"]), step)
+    cur, volt, temp, truth = [], [], [], []
+    for k in range(n):
+        i_true = signal_value(test["current_profile"], k * step)
+        cur.append(i_true + offset)
+        volt.append(cell.terminal_voltage(i_true))
+        temp.append(cell.temp)
+        truth.append(cell.soc * 100.0)
+        cell.step(i_true, step)
+    inputs = {"current_A": {"samples": cur, "dt": step}, "voltage_V": {"samples": volt, "dt": step},
+              "temp_degC": {"samples": temp, "dt": step}}
+    return inputs, {"soc_true_pct": truth}
+
+
 def run_tests(backend, submission: str, spec: dict) -> MilReport:
     """Check the interface, then run every test of an exercise spec on the given backend."""
     rep = MilReport(backend.name)
@@ -190,6 +218,12 @@ def run_tests(backend, submission: str, spec: dict) -> MilReport:
             try:
                 if test["type"] == "open_loop":
                     tr = backend.run_open_loop(handle, test, step)
+                elif test["type"] == "plant_driven":
+                    inputs, truth = plant_driven_inputs(test, step)
+                    tr = backend.run_open_loop(handle, dict(test, inputs=inputs), step)
+                    tr.signals.update(truth)
+                    for est, true in test.get("errors", {}).items():   # derived error signals
+                        tr.signals[f"{est}_error"] = [a - b for a, b in zip(tr.signals[est], tr.signals[true])]
                 elif test["type"] == "closed_loop":
                     tr = backend.run_closed_loop(handle, test, step)
                 else:

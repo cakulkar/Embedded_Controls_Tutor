@@ -41,6 +41,35 @@ class EcsimBackend:
         return TestTrace(ts, sig)
 
     def run_closed_loop(self, c: Compiled, test: dict, step: float) -> TestTrace:
+        if test.get("plant", "dc_motor") == "precharge":
+            return self._precharge_loop(c, test, step)
+        return self._motor_loop(c, test, step)
+
+    def _precharge_loop(self, c: Compiled, test: dict, step: float) -> TestTrace:
+        """HV precharge: inports hv_request, v_pack_V, v_link_V; outports k_precharge, k_main, fault."""
+        from ecsim.plants.battery import PrechargeCircuit
+        sim = self.stepper(c)
+        pp = test.get("plant_params", {})
+        plant = PrechargeCircuit(r_pre=float(pp.get("r_pre", 50.0)), c_link=float(pp.get("c_link", 0.001)))
+        open_at = pp.get("resistor_open_at")
+        n = n_samples(float(test["duration"]), step)
+        sig = {k: [] for k in ("hv_request", "v_pack_V", "v_link_V", *c.outport_names)}
+        ts = []
+        for k in range(n):
+            t = k * step
+            if open_at is not None and t >= float(open_at) - 1e-12:
+                plant.resistor_open = True
+            req = signal_value(test["hv_request"], t)
+            y = sim.step([req, plant.v_pack, plant.v_link])
+            ts.append(t)
+            for name, v in (("hv_request", req), ("v_pack_V", plant.v_pack), ("v_link_V", plant.v_link)):
+                sig[name].append(v)
+            for name, v in zip(c.outport_names, y):
+                sig[name].append(v)
+            plant.step(y[0] > 0.5, y[1] > 0.5, step)
+        return TestTrace(ts, sig)
+
+    def _motor_loop(self, c: Compiled, test: dict, step: float) -> TestTrace:
         """Controller model: inport 1 = measured speed [rpm], outport 1 = voltage command [V]."""
         sim = self.stepper(c)
         plant = DiscreteMotor.at(step)

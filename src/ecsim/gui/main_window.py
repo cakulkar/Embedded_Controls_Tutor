@@ -18,9 +18,6 @@ PLANNED = {
                            "Assignments such as Task #001 (3,000 rpm motor speed controller) with V-model deliverables",
                            "Injected incidents: oscillation, sensor offset, CAN loss, missed deadlines, regressions",
                            "Persona reviewers: tech lead, systems, architect, calibration, test, safety, PM, OEM"]),
-    "Vehicle & Machine Simulator": (9, ["Engine, e-motor, inverter, battery, transmission, clutch, differential",
-                                        "Vehicle dynamics, hydraulic pump/cylinder, steering, brakes, HVAC",
-                                        "Radar/camera abstractions; lock-step with the virtual ECU"]),
     "Calibration Studio": (14, ["Parameter identification, LUT/breakpoint design, A2L & XCP concepts",
                                 "Calibration datasets and change management"]),
     "AI Engineering Mentor": (15, ["Local LLM only, retrieval over local docs with citations",
@@ -67,6 +64,9 @@ class MainWindow(QMainWindow):
                 from ecsim.gui.screens.verification import TestingCenterScreen
                 w = TestingCenterScreen(ctx, learner_id, studio_model=lambda: self.screens["Control Model Studio"]._commit_to_root().model
                                         if self.screens["Control Model Studio"].doc.model["blocks"] else None)
+            elif name == "Vehicle & Machine Simulator":
+                from ecsim.gui.screens.plant_sim import PlantSimScreen
+                w = PlantSimScreen(ctx, learner_id)
             elif name == "CAN Network Analyzer":
                 from ecsim.gui.screens.can_analyzer import CanAnalyzerScreen
                 w = CanAnalyzerScreen(ctx, learner_id)
