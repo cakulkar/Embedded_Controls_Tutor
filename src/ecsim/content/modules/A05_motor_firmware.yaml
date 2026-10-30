@@ -1,0 +1,1143 @@
+# Generated from verified reference/mutant sources; edit freely, then run pytest.
+id: A05
+department: A
+title: 'Practical: motor-control ECU firmware on the virtual ECU'
+ordinal: 5
+version: '1'
+lessons:
+- id: A05-L1
+  title: 'Assignment brief: Engineering Task #001'
+  body: |
+    # Engineering Task #001: motor speed controller firmware
+
+    **Customer requirement:** the electric motor must maintain a commanded speed of
+    3,000 rpm under varying load conditions, and must fail safe.
+
+    In B01 you designed and unit-tested the PI controller. Now you integrate it into
+    firmware that runs on a virtual ECU in closed loop with a simulated motor. You
+    also handle sensor faults and watchdog supervision.
+
+    ### How you are graded
+    Your C file is compiled with `-std=c99 -Wall -Wextra -Werror -pedantic`, loaded
+    into the virtual ECU, and run through four scenarios (3 s each) on the target
+    named in the exercise. Every check is reported with numbers, so a failing check
+    tells you *what* went wrong and *when*. Finding out *why* is your job.
+
+    ### Workflow that works
+    1. Get `motor_nominal` passing with a plain PI.
+    2. Add the sensor range check and safe state, then pass `motor_speed_sensor_open`.
+    3. Decide where the watchdog is serviced, then pass `motor_task_hang`.
+    4. Port to the TC3xx-style target (A05-E2) and explain any difference.
+
+    Use the **Virtual ECU Lab** screen to run single scenarios and look at the signal
+    plots while you develop. Exercises are graded in the Academy.
+exercises:
+- id: A05-E1
+  kind: ecu_app
+  title: Motor speed firmware on Cortex-M4
+  competency: EMB
+  level: advanced
+  points: 60
+  practical: true
+  max_independent_hints: 2
+  prompt: |
+    Write the complete application for the **generic Cortex-M4F** target.
+
+    **Plant (simulated, do not change):** permanent-magnet DC motor, 24 V supply via
+    PWM channel 0 (`duty / PWM_DUTY_MAX × 24 V`). Approximate first-order model:
+    K ≈ 317 rpm/V, τ ≈ 55 ms.
+
+    **Inputs:**
+
+    | ADC ch | Signal | Transfer function | Valid range |
+    |---|---|---|---|
+    | 0 | speed sensor | 0.5 V @ 0 rpm … 4.5 V @ 6000 rpm (linear) | 0.25 – 4.75 V |
+    | 1 | motor current | 2.5 V @ 0 A, 50 mV/A | informational |
+
+    ADC: 12-bit, Vref 5.0 V, `V = counts · Vref / 2^bits` (use `Adc_GetResolutionBits()` and
+    `Adc_GetReferenceVoltage()` rather than hard-coding). About 2 mV of noise is present.
+
+    **Requirements (each is checked by a scenario):**
+
+    | ID | Requirement | Scenario |
+    |---|---|---|
+    | R1 | Hold 3000 rpm ± 60 rpm from t = 1.0 s; peak ≤ 3300 rpm | `motor_nominal` |
+    | R2 | Recover to ± 60 rpm within 0.5 s of a 0.03 N·m load step | `motor_load_step` |
+    | R3 | Speed sensor out of its valid range → report DEM event **1** FAILED within 50 ms and hold PWM at 0 % (latched) | `motor_speed_sensor_open` |
+    | R4 | If the control task hangs, the watchdog must reset the ECU; after a watchdog reset, report DEM event **3** FAILED within 50 ms | `motor_task_hang` |
+    | R5 | No resets, deadline misses or DEM failures in normal operation | `motor_nominal` |
+
+    Tasks available: `app_init` (required), `task_1ms`, `task_10ms`, `task_100ms`.
+    `<stdint.h>`, `<stdbool.h>` and `ecu_hal.h` are already included. Do not define `main` or HAL functions.
+  spec:
+    profile: CM4_GENERIC
+    scenarios:
+    - motor_nominal
+    - motor_load_step
+    - motor_speed_sensor_open
+    - motor_task_hang
+    starter: |
+      /*
+       * Motor speed controller firmware - Engineering Task #001 on the virtual ECU.
+       * ecu_hal.h is already included. See the prompt for the full contract.
+       */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      void app_init(void)
+      {
+          /* TODO: safe outputs first; then check Mcu_GetResetReason() */
+          Pwm_SetDutyCycle(0u, 0u);
+      }
+
+      void task_10ms(void)
+      {
+          /* TODO:
+           *  1. read ADC channel 0 and convert counts -> volts -> rpm
+           *  2. range-check the sensor voltage, debounce, latch a fault, report DEM_SPEED_SENSOR
+           *  3. PI speed control with anti-windup (reuse B01-E4), output 0..24 V
+           *  4. convert volts to PWM duty (0..PWM_DUTY_MAX) or 0 in the safe state
+           *  5. service the watchdog from the task you want supervised
+           */
+      }
+    reference: |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+    mutants:
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+          Wdg_Trigger();
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+      }
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+  hints:
+  - 'Start with task_10ms only: ADC → volts → rpm → your B01-E4 PI → duty. Get `motor_nominal` passing first.'
+  - 'With pole-zero cancellation: Kp = τ/(K·τ_cl) ≈ 0.055/(317 × 0.1) V/rpm and Ki = Kp/τ. Clamp the output to 0…24 V and use clamping anti-windup.'
+  - If the sensor reads 0 V, what speed does your controller believe, and what duty does it command? Range-check before you control.
+  - Which code still runs when task_10ms hangs? Service the watchdog only from the code that must be alive.
+  solution: |
+    Reference design (one of many valid designs):
+
+    * `task_1ms` averages 10 ADC samples (simple noise filter); `task_10ms` runs everything else.
+    * Range check 0.25–4.75 V, debounced 3 × 10 ms, latched; DEM 1 reported once; PWM 0 and integrator cleared in the fault state.
+    * PI: Kp = 0.00174 V/rpm, Ki = 0.0316 V/(rpm·s), clamping anti-windup, output 0–24 V.
+    * `Wdg_Trigger()` at the end of `task_10ms` only.
+    * `app_init` sets PWM 0 and reports DEM 3 when the reset reason is WATCHDOG.
+
+    ```c
+    /* Motor speed controller firmware - reference solution */
+    #define SPEED_SETPOINT_RPM   3000.0f
+    #define V_BAT                24.0f
+    #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+    #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+    #define TS                   0.01f
+    #define SENSOR_V_MIN         0.25f
+    #define SENSOR_V_MAX         4.75f
+    #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+    #define DEM_SPEED_SENSOR     1u
+    #define DEM_WDG_RESET        3u
+
+    static float    v_sum;
+    static uint8_t  n_samples;
+    static float    v_speed;
+    static float    integ;
+    static uint8_t  fault_cnt;
+    static bool     fault_latched;
+
+    static float adc_to_volts(uint16_t counts)
+    {
+        return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+    }
+
+    void app_init(void)
+    {
+        Pwm_SetDutyCycle(0u, 0u);
+        if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+        {
+            Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+        }
+    }
+
+    void task_1ms(void)
+    {
+        v_sum += adc_to_volts(Adc_ReadChannel(0u));
+        n_samples++;
+    }
+
+    static void monitor_sensor(void)
+    {
+        bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+        if (out_of_range)
+        {
+            if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+        }
+        else if (fault_cnt > 0u)
+        {
+            fault_cnt--;
+        }
+        if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+        {
+            fault_latched = true;
+            Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+        }
+    }
+
+    static float speed_pi(float speed_rpm)
+    {
+        float e = SPEED_SETPOINT_RPM - speed_rpm;
+        float p = KP * e;
+        float i_new = integ + (KI * TS * e);
+        float u = p + i_new;
+        if (u > V_BAT)
+        {
+            if (e < 0.0f) { integ = i_new; }
+        }
+        else if (u < 0.0f)
+        {
+            if (e > 0.0f) { integ = i_new; }
+        }
+        else
+        {
+            integ = i_new;
+        }
+        u = p + integ;
+        if (u > V_BAT) { u = V_BAT; }
+        if (u < 0.0f)  { u = 0.0f; }
+        return u;
+    }
+
+    void task_10ms(void)
+    {
+        uint16_t duty = 0u;
+        if (n_samples > 0u)
+        {
+            v_speed = v_sum / (float)n_samples;
+        }
+        v_sum = 0.0f;
+        n_samples = 0u;
+        monitor_sensor();
+        if (!fault_latched)
+        {
+            float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+            float u = speed_pi(speed_rpm);
+            duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+        }
+        else
+        {
+            integ = 0.0f;
+        }
+        Pwm_SetDutyCycle(0u, duty);
+        Wdg_Trigger();
+    }
+    ```
+- id: A05-E2
+  kind: ecu_app
+  title: Port the firmware to the TC3xx-style target
+  competency: EMB
+  level: advanced
+  points: 40
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    Run your firmware on the **AURIX TC3xx-style** target. Same requirements; the target has a **windowed safety watchdog** (servicing less than 5 ms after the previous service is a fault).
+
+    **Plant (simulated, do not change):** permanent-magnet DC motor, 24 V supply via
+    PWM channel 0 (`duty / PWM_DUTY_MAX × 24 V`). Approximate first-order model:
+    K ≈ 317 rpm/V, τ ≈ 55 ms.
+
+    **Inputs:**
+
+    | ADC ch | Signal | Transfer function | Valid range |
+    |---|---|---|---|
+    | 0 | speed sensor | 0.5 V @ 0 rpm … 4.5 V @ 6000 rpm (linear) | 0.25 – 4.75 V |
+    | 1 | motor current | 2.5 V @ 0 A, 50 mV/A | informational |
+
+    ADC: 12-bit, Vref 5.0 V, `V = counts · Vref / 2^bits` (use `Adc_GetResolutionBits()` and
+    `Adc_GetReferenceVoltage()` rather than hard-coding). About 2 mV of noise is present.
+
+    **Requirements (each is checked by a scenario):**
+
+    | ID | Requirement | Scenario |
+    |---|---|---|
+    | R1 | Hold 3000 rpm ± 60 rpm from t = 1.0 s; peak ≤ 3300 rpm | `motor_nominal` |
+    | R2 | Recover to ± 60 rpm within 0.5 s of a 0.03 N·m load step | `motor_load_step` |
+    | R3 | Speed sensor out of its valid range → report DEM event **1** FAILED within 50 ms and hold PWM at 0 % (latched) | `motor_speed_sensor_open` |
+    | R4 | If the control task hangs, the watchdog must reset the ECU; after a watchdog reset, report DEM event **3** FAILED within 50 ms | `motor_task_hang` |
+    | R5 | No resets, deadline misses or DEM failures in normal operation | `motor_nominal` |
+
+    Tasks available: `app_init` (required), `task_1ms`, `task_10ms`, `task_100ms`.
+    `<stdint.h>`, `<stdbool.h>` and `ecu_hal.h` are already included. Do not define `main` or HAL functions.
+  spec:
+    profile: TC3XX_LIKE
+    scenarios:
+    - motor_nominal
+    - motor_load_step
+    - motor_speed_sensor_open
+    - motor_task_hang
+    starter: |
+      /*
+       * Motor speed controller firmware - Engineering Task #001 on the virtual ECU.
+       * ecu_hal.h is already included. See the prompt for the full contract.
+       */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      void app_init(void)
+      {
+          /* TODO: safe outputs first; then check Mcu_GetResetReason() */
+          Pwm_SetDutyCycle(0u, 0u);
+      }
+
+      void task_10ms(void)
+      {
+          /* TODO:
+           *  1. read ADC channel 0 and convert counts -> volts -> rpm
+           *  2. range-check the sensor voltage, debounce, latch a fault, report DEM_SPEED_SENSOR
+           *  3. PI speed control with anti-windup (reuse B01-E4), output 0..24 V
+           *  4. convert volts to PWM duty (0..PWM_DUTY_MAX) or 0 in the safe state
+           *  5. service the watchdog from the task you want supervised
+           */
+      }
+    reference: |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+    mutants:
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+          Wdg_Trigger();
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Pwm_SetDutyCycle(0u, duty);
+      }
+    - |
+      /* Motor speed controller firmware - reference solution */
+      #define SPEED_SETPOINT_RPM   3000.0f
+      #define V_BAT                24.0f
+      #define KP                   0.00174f    /* V/rpm  (tau/(K*tau_cl), tau_cl = 0.1 s) */
+      #define KI                   0.0316f     /* V/(rpm*s) (Kp/tau) */
+      #define TS                   0.01f
+      #define SENSOR_V_MIN         0.25f
+      #define SENSOR_V_MAX         4.75f
+      #define FAULT_DEBOUNCE       3u          /* x 10 ms */
+      #define DEM_SPEED_SENSOR     1u
+      #define DEM_WDG_RESET        3u
+
+      static float    v_sum;
+      static uint8_t  n_samples;
+      static float    v_speed;
+      static float    integ;
+      static uint8_t  fault_cnt;
+      static bool     fault_latched;
+
+      static float adc_to_volts(uint16_t counts)
+      {
+          return ((float)counts * Adc_GetReferenceVoltage()) / (float)(1UL << Adc_GetResolutionBits());
+      }
+
+      void app_init(void)
+      {
+          Pwm_SetDutyCycle(0u, 0u);
+          if (Mcu_GetResetReason() == MCU_RESET_WATCHDOG)
+          {
+              Dem_SetEventStatus(DEM_WDG_RESET, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      void task_1ms(void)
+      {
+          v_sum += adc_to_volts(Adc_ReadChannel(0u));
+          n_samples++;
+      }
+
+      static void monitor_sensor(void)
+      {
+          bool out_of_range = (v_speed < SENSOR_V_MIN) || (v_speed > SENSOR_V_MAX);
+          if (out_of_range)
+          {
+              if (fault_cnt < FAULT_DEBOUNCE) { fault_cnt++; }
+          }
+          else if (fault_cnt > 0u)
+          {
+              fault_cnt--;
+          }
+          if ((fault_cnt >= FAULT_DEBOUNCE) && !fault_latched)
+          {
+              fault_latched = true;
+              Dem_SetEventStatus(DEM_SPEED_SENSOR, DEM_EVENT_STATUS_FAILED);
+          }
+      }
+
+      static float speed_pi(float speed_rpm)
+      {
+          float e = SPEED_SETPOINT_RPM - speed_rpm;
+          float p = KP * e;
+          float i_new = integ + (KI * TS * e);
+          float u = p + i_new;
+          if (u > V_BAT)
+          {
+              if (e < 0.0f) { integ = i_new; }
+          }
+          else if (u < 0.0f)
+          {
+              if (e > 0.0f) { integ = i_new; }
+          }
+          else
+          {
+              integ = i_new;
+          }
+          u = p + integ;
+          if (u > V_BAT) { u = V_BAT; }
+          if (u < 0.0f)  { u = 0.0f; }
+          return u;
+      }
+
+      void task_10ms(void)
+      {
+          uint16_t duty = 0u;
+          if (n_samples > 0u)
+          {
+              v_speed = v_sum / (float)n_samples;
+          }
+          v_sum = 0.0f;
+          n_samples = 0u;
+          monitor_sensor();
+          if (!fault_latched)
+          {
+              float speed_rpm = (v_speed - 0.5f) * (6000.0f / 4.0f);
+              float u = speed_pi(speed_rpm);
+              duty = (uint16_t)((u / V_BAT) * (float)PWM_DUTY_MAX);
+          }
+          else
+          {
+              integ = 0.0f;
+          }
+          Wdg_Trigger();
+          Pwm_SetDutyCycle(0u, duty);
+          Wdg_Trigger();
+      }
+  hints:
+  - 'Read the reset detail in the grader output: when, and why?'
+  - Count how often your code calls Wdg_Trigger() per 10 ms, and from where.
+  solution: |
+    The CM4 reference passes unchanged *if* it services the watchdog exactly once per
+    10 ms cycle. Two typical porting defects:
+
+    * Servicing from `task_1ms`: only 1 ms between services, so the window is violated and the ECU resets immediately.
+    * Servicing twice in `task_10ms` (e.g. at the start "to be safe" and at the end): 0 ms between services, so it resets.
+
+    The windowed safety watchdog turns "harmless" extra services into resets on purpose: a
+    runaway that services too often is detected as well as one that stops.

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBo
 
 from ecsim import __version__
 from ecsim.app.services import AppContext, bootstrap
-from ecsim.gui.screens import AcademyScreen, CompetencyScreen, DashboardScreen, PlannedScreen
+from ecsim.gui.screens import AcademyScreen, CompetencyScreen, DashboardScreen, EcuLabScreen, PlannedScreen
 from ecsim.gui.widgets import THEME
 
 # (title, phase, planned scope) for screens delivered after Phase 1.
@@ -22,9 +22,6 @@ PLANNED = {
                                  "Required block library (math, control, logic, dynamic, discrete, automotive, BMS, driveline, safety)",
                                  "State machines, lookup tables, C code generation for supported blocks",
                                  "Model ↔ generated-C back-to-back comparison"]),
-    "Virtual ECU Lab": (2, ["Configurable MCU: RAM/flash limits, CPU execution-time model",
-                            "Task scheduler, interrupts, ADC/PWM/GPIO, watchdog, reset, bootloader",
-                            "Diagnostic memory and fault injection"]),
     "Vehicle & Machine Simulator": (7, ["Engine, e-motor, inverter, battery, transmission, clutch, differential",
                                         "Vehicle dynamics, hydraulic pump/cylinder, steering, brakes, HVAC",
                                         "Radar/camera abstractions; lock-step with the virtual ECU"]),
@@ -72,6 +69,8 @@ class MainWindow(QMainWindow):
                 w = DashboardScreen(ctx, learner_id)
             elif name == "Learning Academy":
                 w = AcademyScreen(ctx, learner_id, on_change=self.refresh_all)
+            elif name == "Virtual ECU Lab":
+                w = EcuLabScreen(ctx, learner_id)
             elif name == "Competency & Certification":
                 w = CompetencyScreen(ctx, learner_id)
             else:

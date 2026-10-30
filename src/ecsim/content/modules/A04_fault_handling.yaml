@@ -1,0 +1,261 @@
+id: A04
+department: A
+title: "Fault handling, debouncing, watchdogs and resets"
+ordinal: 4
+version: "1"
+
+lessons:
+  - id: A04-L1
+    title: "Detect, debounce, react, report"
+    body: |
+      # The fault-handling chain
+
+      Every monitored signal goes through the same chain:
+
+      1. **Detect.** Range check (signal-range low/high), plausibility against other
+         signals, rate-of-change, timeout.
+      2. **Debounce.** A single bad sample is not a fault: noise, EMC and
+         transients happen. Confirm it over time, but bound the delay, because the
+         *fault reaction time* is a safety requirement.
+      3. **React.** Go to a defined **safe state** or degraded mode (e.g. motor torque
+         to zero, substitute value, limp-home).
+      4. **Report.** Store a diagnostic event for the workshop and for the
+         functional-safety evidence.
+
+      ### Counter-based debouncing
+      A counter moves up by `inc` for each failing sample and down by `dec` for each
+      passing sample. The counter is clamped to `[pass_threshold, fail_threshold]`.
+      Reaching `fail_threshold` sets FAILED; reaching `pass_threshold` (negative) sets
+      PASSED; in between, the status **does not change** (hysteresis). AUTOSAR's
+      diagnostic event manager offers a counter-based debounce algorithm built on
+      this idea; check the specification of your stack for the exact semantics.
+
+      Asymmetric steps let a fault be confirmed quickly and healed slowly.
+
+  - id: A04-L2
+    title: "Resets and reset reasons"
+    body: |
+      # Resets are events, not just restarts
+
+      After any reset, all RAM-based state is gone. A real start-up routine zeroes
+      `.bss` and copies `.data`, and the virtual ECU reloads your program to achieve
+      the same thing. What survives is what the hardware latched (the **reset
+      reason**) and what the software stored in non-volatile memory.
+
+      `app_init()` must therefore:
+
+      * put every output into its safe state *before* anything else,
+      * read the reset reason. A watchdog reset means the software failed, which
+        should be recorded (diagnostic event) and may justify a degraded start,
+      * never assume a variable kept its value across a reset.
+
+      A software that resets, forgets why, and resumes full operation hides a
+      defect that will return in the field.
+
+exercises:
+  - id: A04-E1
+    kind: c_function
+    title: "Counter-based debounce with hysteresis"
+    competency: EMB
+    level: intermediate
+    points: 25
+    practical: true
+    prompt: |
+      Implement
+
+      ```c
+      typedef struct { int16_t counter; uint8_t status; } debounce_t;
+      #define DEB_PASSED 0u
+      #define DEB_FAILED 1u
+
+      void    debounce_init(debounce_t *d);
+      uint8_t debounce_step(debounce_t *d, bool fault,
+                            int16_t inc, int16_t dec,
+                            int16_t fail_thr, int16_t pass_thr);
+      ```
+
+      * `debounce_init`: counter 0, status PASSED.
+      * `fault == true`: `counter = min(counter + inc, fail_thr)`; otherwise
+        `counter = max(counter − dec, pass_thr)`. No intermediate overflow for any `int16_t` inputs.
+      * Then: `counter >= fail_thr` → FAILED; `counter <= pass_thr` → PASSED; else the
+        status is **unchanged**.
+      * Return the status. With `d == NULL`, do nothing and return `DEB_PASSED`.
+
+      The typedef and macros are provided; do not redefine them.
+    spec:
+      prototypes: |
+        typedef struct { int16_t counter; uint8_t status; } debounce_t;
+        #define DEB_PASSED 0u
+        #define DEB_FAILED 1u
+        void    debounce_init(debounce_t *d);
+        uint8_t debounce_step(debounce_t *d, bool fault, int16_t inc, int16_t dec, int16_t fail_thr, int16_t pass_thr);
+      starter: |
+        void debounce_init(debounce_t *d)
+        {
+            /* TODO */
+            (void)d;
+        }
+
+        uint8_t debounce_step(debounce_t *d, bool fault, int16_t inc, int16_t dec,
+                              int16_t fail_thr, int16_t pass_thr)
+        {
+            /* TODO */
+            (void)d; (void)fault; (void)inc; (void)dec; (void)fail_thr; (void)pass_thr;
+            return DEB_PASSED;
+        }
+      harness: |
+        int main(void)
+        {
+            debounce_t d;
+            int k;
+            uint8_t s = 0u;
+            debounce_init(&d);
+            CHECK_EQ_I(d.counter, 0, "init counter");
+            CHECK_EQ_U(d.status, DEB_PASSED, "init status");
+            CHECK_EQ_U(debounce_step(&d, true, 2, 1, 6, -4), DEB_PASSED, "1 fault: still passed");
+            CHECK_EQ_U(debounce_step(&d, true, 2, 1, 6, -4), DEB_PASSED, "2 faults: still passed");
+            CHECK_EQ_U(debounce_step(&d, true, 2, 1, 6, -4), DEB_FAILED, "3 faults: failed");
+            s = debounce_step(&d, true, 2, 1, 6, -4);
+            CHECK_EQ_I(d.counter, 6, "counter clamped at fail threshold");
+            CHECK_EQ_U(s, DEB_FAILED, "stays failed");
+            CHECK_EQ_U(debounce_step(&d, false, 2, 1, 6, -4), DEB_FAILED, "hysteresis: one good sample keeps FAILED");
+            debounce_init(&d);
+            for (k = 0; k < 4; k++) { (void)debounce_step(&d, true, 2, 1, 6, -4); }
+            for (k = 0; k < 9; k++) { s = debounce_step(&d, false, 2, 1, 6, -4); }
+            CHECK_EQ_U(s, DEB_FAILED, "9 good samples after clamp: not healed yet");
+            s = debounce_step(&d, false, 2, 1, 6, -4);
+            CHECK_EQ_U(s, DEB_PASSED, "10th good sample heals (6 -> -4)");
+            CHECK_EQ_I(d.counter, -4, "counter at pass threshold");
+            (void)debounce_step(&d, false, 2, 1, 6, -4);
+            CHECK_EQ_I(d.counter, -4, "counter clamped at pass threshold");
+            d.counter = 30000; d.status = DEB_PASSED;
+            CHECK_EQ_U(debounce_step(&d, true, 10000, 1, 32000, -100), DEB_FAILED, "large step reaches threshold");
+            CHECK_EQ_I(d.counter, 32000, "no int16 overflow on increment");
+            d.counter = -30000; d.status = DEB_FAILED;
+            CHECK_EQ_U(debounce_step(&d, false, 1, 10000, 100, -32000), DEB_PASSED, "large step down");
+            CHECK_EQ_I(d.counter, -32000, "no int16 overflow on decrement");
+            CHECK_EQ_U(debounce_step(NULL, true, 1, 1, 1, -1), DEB_PASSED, "NULL safe");
+            debounce_init(NULL);
+            CHECK(1, "init(NULL) did not crash");
+            return ECSIM_DONE();
+        }
+      reference: |
+        void debounce_init(debounce_t *d)
+        {
+            if (d != NULL)
+            {
+                d->counter = 0;
+                d->status = DEB_PASSED;
+            }
+        }
+
+        uint8_t debounce_step(debounce_t *d, bool fault, int16_t inc, int16_t dec,
+                              int16_t fail_thr, int16_t pass_thr)
+        {
+            uint8_t status = DEB_PASSED;
+            if (d != NULL)
+            {
+                int32_t c = (int32_t)d->counter;
+                if (fault)
+                {
+                    c += (int32_t)inc;
+                    if (c > (int32_t)fail_thr) { c = (int32_t)fail_thr; }
+                }
+                else
+                {
+                    c -= (int32_t)dec;
+                    if (c < (int32_t)pass_thr) { c = (int32_t)pass_thr; }
+                }
+                d->counter = (int16_t)c;
+                if (c >= (int32_t)fail_thr)
+                {
+                    d->status = DEB_FAILED;
+                }
+                else if (c <= (int32_t)pass_thr)
+                {
+                    d->status = DEB_PASSED;
+                }
+                else
+                {
+                    /* hysteresis: keep previous status */
+                }
+                status = d->status;
+            }
+            return status;
+        }
+      mutants:
+        - |
+          void debounce_init(debounce_t *d) { if (d != NULL) { d->counter = 0; d->status = DEB_PASSED; } }
+          uint8_t debounce_step(debounce_t *d, bool fault, int16_t inc, int16_t dec, int16_t fail_thr, int16_t pass_thr)
+          {
+              if (d == NULL) { return DEB_PASSED; }
+              d->counter = (int16_t)(fault ? (d->counter + inc) : (d->counter - dec));
+              if (d->counter >= fail_thr) { d->status = DEB_FAILED; }
+              else if (d->counter <= pass_thr) { d->status = DEB_PASSED; }
+              else { }
+              return d->status;
+          }
+        - |
+          void debounce_init(debounce_t *d) { if (d != NULL) { d->counter = 0; d->status = DEB_PASSED; } }
+          uint8_t debounce_step(debounce_t *d, bool fault, int16_t inc, int16_t dec, int16_t fail_thr, int16_t pass_thr)
+          {
+              int32_t c;
+              if (d == NULL) { return DEB_PASSED; }
+              c = (int32_t)d->counter + (fault ? (int32_t)inc : -(int32_t)dec);
+              if (c > fail_thr) { c = fail_thr; }
+              if (c < pass_thr) { c = pass_thr; }
+              d->counter = (int16_t)c;
+              d->status = (c >= fail_thr) ? DEB_FAILED : DEB_PASSED;
+              return d->status;
+          }
+    hints:
+      - "Do the arithmetic in int32_t, clamp, then store back into the int16_t counter."
+      - "The status changes only at the two thresholds. What should happen in between?"
+      - "Clamping matters for recovery time: without it, a long fault makes healing take longer and longer."
+    solution: |
+      See the reference: widen to `int32_t`, step and clamp, then update the status only at
+      the thresholds. The clamp bounds the healing time (here exactly 10 good samples
+      from FAILED). The hysteresis prevents a fault that is borderline from toggling the
+      status every sample.
+
+  - id: A04-E2
+    kind: numeric
+    title: "Worst-case fault reaction time"
+    competency: FUS
+    level: intermediate
+    points: 15
+    prompt: |
+      A sensor is range-checked in task_10ms with the debouncer above: `inc = 2`,
+      `fail_thr = 8`, starting from counter 0. The fault appears **just after** a
+      task_10ms execution and persists.
+
+      What is the worst-case time in ms from fault onset until the status becomes FAILED?
+    spec: {answer: 40, abs_tol: 0, unit: ms}
+    hints:
+      - "How many consecutive failing samples reach the threshold?"
+      - "When is the first sample that sees the fault taken?"
+    solution: |
+      4 failing samples are needed (2, 4, 6, 8). The first is taken 10 ms after onset,
+      the 4th at **40 ms**. Add the time to reach the safe state after that, and
+      compare the total against the fault-tolerant time interval from the safety analysis.
+
+  - id: A04-E3
+    kind: choice
+    title: "After a watchdog reset"
+    competency: FUS
+    level: beginner
+    points: 10
+    prompt: "The ECU starts and `Mcu_GetResetReason()` returns WATCHDOG. What should `app_init()` do?"
+    spec:
+      options:
+        - "Nothing special; a reset is a reset."
+        - "Put outputs into the safe state, record a diagnostic event for the watchdog reset, and apply the project's restart strategy (e.g. normal or degraded start, counting repeated resets)."
+        - "Immediately trigger a software reset to get a clean power-on state."
+        - "Disable the watchdog so the ECU cannot reset again."
+      correct: [1]
+    hints:
+      - "What would a workshop technician or a safety assessor want to know later?"
+    solution: |
+      **Option 2.** The reset reason is evidence that software failed. Record it, start
+      safely, and use a reset counter to decide whether to keep operating or stay in a
+      degraded mode. The `motor_task_hang` scenario checks that the event is reported.

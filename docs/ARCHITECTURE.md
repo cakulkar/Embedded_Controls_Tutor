@@ -1,5 +1,5 @@
 # ECSim — Embedded Controls Engineer Job Simulator
-## System Architecture (v0.1, Phase 1 baseline)
+## System Architecture (v0.2, Phase 2)
 
 > Status legend used throughout this repo: **[BUILT]** implemented and tested,
 > **[PLANNED Pn]** designed but not implemented, scheduled for roadmap phase *n*.
@@ -41,8 +41,8 @@ across automotive, agricultural and construction domains.
 │ Engines (pure Python / C, no Qt dependency, unit-testable)               │
 │  learning.engine · learning.graders · competency scoring      [BUILT]    │
 │  model graph + solver + C codegen                             [P4/P5]    │
-│  virtual ECU: scheduler, CPU-time model, periph, watchdog     [P2]       │
-│  plant library (ODE / FMU via OpenModelica)                   [P3/P7-10] │
+│  virtual ECU: scheduler, CPU-time model, periph, watchdog     [BUILT P2] │
+│  plant library: DC motor [BUILT P2]; more + FMU               [P3/P7-10] │
 │  CAN bus sim, DBC/A2L/ARXML I/O, UDS server                   [P6]       │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ Persistence: SQLite (WAL) + versioned SQL migrations          [BUILT]    │
@@ -87,8 +87,8 @@ ecsim/
 │   ├── content/                curriculum.yaml + modules/*.yaml (+ C harnesses inline)
 │   ├── cli.py                  headless interface
 │   ├── model/        [P4]      block library, graph, solver, codegen
-│   ├── ecu/          [P2]      virtual ECU
-│   ├── plants/       [P3+]     plant models
+│   ├── ecu/          [BUILT]   virtual ECU: profiles, HAL ABI (c/), timing model, scenarios, runner, lab
+│   ├── plants/       [P2+]     plant models (dc_motor built)
 │   ├── comms/        [P6]      CAN/J1939/ISOBUS/UDS/DBC/A2L
 │   ├── reqs/         [P5]      requirements + ReqIF + traceability
 │   ├── testing/      [P5/12]   MIL/SIL/HIL orchestration, coverage
@@ -152,7 +152,14 @@ learner tables are *append-mostly evidence* and never deleted by sync.
 | `hint_reveal` | (learner, exercise, level) PK | |
 | `solution_reveal` | (learner, exercise) PK, explicit_request, revealed_at | |
 
-### 5.2 Later migrations [PLANNED]
+### 5.2 Migration 0002_ecu [BUILT, Phase 2]
+Recreates the content-only `exercise` table to allow kind `ecu_app` (SQLite cannot alter
+a CHECK constraint; no evidence lives in that table), and adds `ecu_run` (learner,
+profile, scenario, source hash, seed, pass, CPU load, resets, summary JSON). Lab runs
+are logged for reproducibility but are never graded evidence. Upgrading a Phase 1
+database in place is covered by `test_phase1_database_upgrades_in_place`.
+
+### 5.3 Later migrations [PLANNED]
 
 | Migration | Phase | Tables |
 |---|---|---|
@@ -160,7 +167,6 @@ learner tables are *append-mostly evidence* and never deleted by sync.
 | 0003_requirements | P5 | `requirement`(level: customer/system/functional/software, text, acceptance_criteria, status, version), `trace_link`(src, dst, kind: derives/satisfies/verifies), `change_request` |
 | 0004_models | P4 | `model`(json graph, hash), `sim_run`(model hash, solver cfg, seed, result path) |
 | 0005_tests | P5/P12 | `test_case`, `test_run`, `test_result`, `coverage`, `defect` |
-| 0006_ecu | P2 | `ecu_config`, `fault_injection`, `dtc_event` |
 | 0007_calibration | P12 | `cal_parameter`, `cal_dataset`, `cal_change` |
 | 0008_jobsim | P14 | `company`, `persona`, `assignment`, `incident`, `assignment_event` |
 | 0009_mentor | P13 | `mentor_session`, `review_finding`(class: correct/poor-design/unsafe/incorrect, reference) |
@@ -190,6 +196,33 @@ See `CURRICULUM.md`. Content packs carry the mapping per exercise
   noise, dropout, delay, bus-off, reset).
 - **Reproducibility.** Every run stores model hash, solver settings, seed, toolchain
   versions.
+
+## 7a. Virtual ECU [BUILT, Phase 2]
+
+```
+learner app.c ──gcc -Werror──▶ app.so/.dll ◀── hal.c (ecu_io struct = "registers")
+                                   │ ctypes (child process: python -m ecsim.ecu.runner)
+            ┌──────────────────────┴───────────────────────────┐
+  1 ms tick │ ADC model (quantise, noise, faults) → tasks (preemptive timing model,
+            │ activation limit 1) → watchdog (timeout + window) → DEM log → reset/reload
+            └──────────────────────┬───────────────────────────┘
+                                   ▼ PWM duty            ▲ sensor volts
+                              DC motor plant (exact first-order step)
+```
+
+* **Profiles** (`ecu/profiles.py`): `CM4_GENERIC` (single core, timeout watchdog) and
+  `TC3XX_LIKE` (3 cores declared, core 0 simulated, windowed safety watchdog). Planned
+  multi-core features are listed in the profile so the UI states them.
+* **Timing honesty:** task code runs at release time (functional), while CPU time is
+  simulated from *modelled* WCETs. The learner's actual instruction timing is not
+  simulated (documented in lesson A03-L2).
+* **Reset fidelity:** the library is reloaded from a fresh copy, so static variables
+  restart. DEM is preserved like NV memory.
+* **Isolation:** scenarios run in a child process; a segfault or infinite loop in learner
+  code is reported, and never takes down the GUI or grader.
+* **Grading:** `ecu_app` exercises run a list of scenarios. Every check is numeric and
+  explained. Reference passes, starter fails, and each mutant (plausible defect) must
+  build and fail — enforced by tests.
 
 ## 8. Graphical model editor architecture [PLANNED P4]
 

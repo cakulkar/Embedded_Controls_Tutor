@@ -35,7 +35,7 @@ UTF-8, and `test_portability.py` guards it on every OS.
 - Content covers only the competencies EMB, CTL, VEH, COM and FUS at beginner/intermediate. Other
   levels show "no content yet" and cannot be achieved, by design.
 
-## Next: Phase 2 — Embedded C academy + virtual ECU
+## Phase 2 plan (as written before implementation)
 1. `ecsim/ecu/`: deterministic virtual-time scheduler (1 ms base tick), task table with
    priorities, a per-task WCET budget model, ISR injection, watchdog with window, reset causes.
 2. Peripheral models: ADC (resolution, Vref, noise, fault states), PWM (resolution, frequency),
@@ -45,3 +45,39 @@ UTF-8, and `test_portability.py` guards it on every OS.
 4. Assignment A-P1 (motor-control firmware): periodic tasks, sensor input, PWM out, fault
    handling, watchdog supervision. Graded on the virtual ECU.
 5. Migration 0006_ecu, the Virtual ECU Lab screen, and tests.
+
+## Phase 2 — Embedded C academy + virtual ECU — **DONE on branch (2026-10-29)**
+
+| Item | Status | Evidence |
+|---|---|---|
+| C HAL ABI (`ecu_hal.h`, `hal.c`) with layout check against ctypes mirror | built | `test_vecu.py` (every test loads it) |
+| Shared-library build with `-Werror`, HAL-redefinition guard, indicative size/stack report | built | `test_build_*` |
+| Target profiles: Cortex-M4 generic, AURIX TC3xx-style (windowed safety WDT; multi-core declared as planned) | built | `test_profiles`, `test_windowed_watchdog` |
+| Preemptive fixed-priority timing model, CPU load, activation limit 1, deadline misses | built | `test_cpu_load_and_task_rates`, `test_overrun_drops_every_second_activation` |
+| Watchdog: timeout + window; reset reasons; fresh RAM after reset; DEM survives reset | built | `test_watchdog_*`, `test_reset_restarts_static_variables_but_keeps_dem` |
+| ADC model: quantisation, seeded noise, offset/stuck/open/short faults | built | `test_adc_conversion_and_faults`, `test_noise_is_seeded_and_reproducible` |
+| DC motor plant (exact discretisation) | built | `test_dc_motor_matches_first_order_model` |
+| 4 closed-loop scenarios with fault injection; deterministic | built | `test_scenarios_are_deterministic` |
+| Process isolation for crashes and infinite loops | built | `test_crashing_application_is_isolated`, `test_hanging_application_times_out` |
+| `ecu_app` grader; reference passes, starter fails, 6 mutants caught | built | `test_ecu.py` |
+| Migration 0002 (ecu_app kind, `ecu_run` log), in-place upgrade from Phase 1 | built | `test_phase1_database_upgrades_in_place` |
+| Content: A03 scheduling, A04 fault handling (C debounce), A05 practical on both targets | built | content + grader tests |
+| Virtual ECU Lab screen (build/run, plots, checks, DEM/reset log, CSV export) | built | `test_ecu_lab_screen` |
+| CLI `ecsim ecu profiles`, `ecsim ecu run … --csv` | built | `test_cli_ecu` |
+
+**Test totals:** 110 passed on Linux. Windows CI result pending on the PR.
+
+### Known limitations (Phase 2)
+- Execution time is *modelled* per task, not measured from the learner's instructions.
+  Instruction-accurate timing needs an instruction-set simulator (e.g. QEMU Cortex-M),
+  evaluated for Phase 12 (PIL approximation).
+- Interrupts are not simulated as asynchronous preemption inside a task; ISR/task data
+  races get dedicated exercises later rather than a fake model.
+- TC3xx-style profile runs the application on one core. Multi-core execution,
+  per-core watchdogs, lockstep and memory protection are declared as planned.
+- CAN is not part of the virtual ECU yet (Phase 6).
+- Spec items still open in Dept A: C++ for embedded, RTOS mutex/semaphore labs,
+  DMA, bootloader/firmware update. They are scheduled with Phases 6 and 11, where
+  CAN and UDS make bootloader flashing meaningful.
+
+## Next: Phase 3 — Control theory + Python/Xcos integration
