@@ -137,3 +137,18 @@ later edits when one Apply changed several fields.
 
 **Verification note:** `.slx` import is tested against files produced in Simulink's documented XML
 layout by a test writer, not against files saved by MATLAB. Please import a few of your own models.
+
+## Phase 5 — State machines (Stateflow-style) — **DONE (2026-10-29)**
+
+| Item | Evidence |
+|---|---|
+| `Chart` block: hierarchy, default children, entry/during/exit, guards/actions, priorities, outer-first checking, one transition per step | `test_chart.py` (action order checked digit by digit) |
+| Temporal logic `after(n, tick)` / `after(t, sec)`, counters reset on (re-)entry | `test_temporal_logic_counts_from_entry_and_resets_on_reentry` |
+| Restricted expression/action language (parsed, never `eval`'d), actionable validation | `test_expression_language`, `test_validation_messages` |
+| SCXML export/import with behaviour-preserving round trip | `test_scxml_round_trip_preserves_behaviour` |
+| Chart editor in the Studio: definition with live validation + state diagram | `test_chart_editing_in_studio` |
+| Content B03: chart semantics, mode/fault patterns, motor mode manager practical (16 checks, 4 mutants) | `test_content_models.py` (applies to every model exercise, both backends) |
+| `.slx` import reports Stateflow charts clearly; script export notes charts | `slx.py` |
+
+Not yet: junctions, events, parallel states, `duration()`, and graphical state drawing (the diagram is
+generated from the definition). Real Stateflow charts are graded directly through the Simulink backend.

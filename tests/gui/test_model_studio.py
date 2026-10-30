@@ -193,3 +193,30 @@ def test_parse_signal():
     assert parse_signal("step 1 0 5") == {"step": {"t": 1.0, "before": 0.0, "after": 5.0}}
     with pytest.raises(ModelError):
         parse_signal("pulse 1")
+
+
+def test_chart_editing_in_studio(studio):
+    from ecsim.gui.chart_editor import ChartEditorDialog
+    from PySide6.QtWidgets import QDialogButtonBox
+    studio.doc.add_block("Chart", (100, 100), bid="ch")
+    studio.canvas.blocks["ch"].setSelected(True)
+    QApplication.processEvents()
+    assert "Chart" in studio.prop_title.text()
+    holder = {}
+
+    def factory(spec, parent):
+        d = ChartEditorDialog(spec, parent)
+        holder["d"] = d
+        d.text.setPlainText('{"inputs": ["a", "b"], "outputs": ["y"], "initial": "S", "states": [{"name": "S", "during": "y = a + b"}]}')
+        d._accept()
+        return d
+    assert studio.edit_chart("ch", factory)
+    assert studio.doc.ports("ch") == (2, 1)
+    d = ChartEditorDialog({"outputs": []}, None)
+    assert "✗" in d.status.text() and not d.buttons.button(QDialogButtonBox.Ok).isEnabled()
+    d.text.setPlainText("{bad json")
+    assert "JSON" in d.status.text()
+    from ecsim.model.chart import to_scxml
+    good = {"inputs": [], "outputs": ["y"], "initial": "S", "states": [{"name": "S", "entry": "y = 1"}]}
+    assert d.set_scxml(to_scxml(good)) and "✓" in d.status.text()
+    assert len(d.view.scene().items()) > 2

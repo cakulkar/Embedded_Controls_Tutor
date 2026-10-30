@@ -11,7 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from ecsim.model.blocks import LIB, ModelError, block_type, validate_params
+from ecsim.model import blocks as _blocks
+from ecsim.model.blocks import LIB, ModelError, block_type
 from ecsim.model.core import FORMAT, Compiled, compile_model, load_model
 
 _ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -24,6 +25,7 @@ PALETTE: dict[str, list[str]] = {
     "Discrete": ["UnitDelay", "DiscreteIntegrator", "DiscreteTransferFcn"],
     "Logic and Routing": ["RelationalOperator", "LogicalOperator", "Switch"],
     "Lookup Tables": ["Lookup1D"],
+    "Stateflow": ["Chart"],
     "Ports & Subsystems": ["Subsystem"],
 }
 
@@ -215,7 +217,7 @@ class ModelDocument:
         merged = dict(bt.defaults or {})
         merged.update(p)
         if type_name != "Subsystem":
-            validate_params(type_name, merged)
+            _blocks.validate_params(type_name, merged)
         blk = {"id": new_id, "type": type_name, "params": p, "pos": [float(pos[0]), float(pos[1])]}
         self._snapshot_cmd(f"Add {type_name}", lambda m: m["blocks"].append(blk))
         return new_id
@@ -269,7 +271,7 @@ class ModelDocument:
         merged.update(b.get("params", {}))
         merged[key] = value
         try:
-            validate_params(b["type"], merged)
+            _blocks.validate_params(b["type"], merged)
         except KeyError as exc:
             raise ModelError(f"missing parameter {exc}") from None
         if key == "port":

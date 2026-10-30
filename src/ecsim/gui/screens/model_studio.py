@@ -60,7 +60,8 @@ def block_label(b: dict) -> str:
               "RelationalOperator": lambda: p.get("op", "<="), "LogicalOperator": lambda: p.get("op", "AND"),
               "Inport": lambda: f"In {p.get('port', 1)}", "Outport": lambda: f"Out {p.get('port', 1)}",
               "UnitDelay": lambda: "1/z", "DiscreteIntegrator": lambda: "K·T/(z−1)" if p.get("method", "ForwardEuler") == "ForwardEuler" else "K·T·z/(z−1)",
-              "Lookup1D": lambda: "1-D LUT", "Subsystem": lambda: "⊞ subsystem"}.get(t, lambda: "")()
+              "Lookup1D": lambda: "1-D LUT", "Subsystem": lambda: "⊞ subsystem",
+              "Chart": lambda: f"{len((p.get('chart') or {}).get('states', []))} states"}.get(t, lambda: "")()
     return f"{t}\n{detail}" if detail else t
 
 
@@ -458,8 +459,12 @@ class ModelStudioScreen(QWidget):
         self.form.addRow("Name", self.prop_edits["__id__"])
         params = dict(bt.defaults or {})
         params.update(b.get("params", {}))
+        if b["type"] == "Chart":
+            btn = QPushButton("Edit chart…")
+            btn.clicked.connect(lambda: self.edit_chart(bid))
+            self.form.addRow("states", btn)
         for k, v in params.items():
-            if k in ("model",):
+            if k in ("model", "chart"):
                 continue
             e = QLineEdit(json.dumps(v) if isinstance(v, list) else (str(v) if not isinstance(v, float) else f"{v:g}"))
             self.form.addRow(k, e)
@@ -468,6 +473,18 @@ class ModelStudioScreen(QWidget):
             e = QLineEdit(f"{b.get('sample_time', -1):g}")
             self.form.addRow("sample time", e)
             self.prop_edits["__ts__"] = e
+
+    def edit_chart(self, bid: str, dialog_factory=None) -> bool:
+        """Open the chart editor; `dialog_factory` lets tests drive the dialog without exec()."""
+        from ecsim.gui.chart_editor import ChartEditorDialog
+        b = self.doc.block(bid)
+        spec = b.get("params", {}).get("chart") or LIB["Chart"].defaults["chart"]
+        dlg = (dialog_factory or ChartEditorDialog)(spec, self)
+        if dialog_factory is None and not dlg.exec():
+            return False
+        if dlg.result_spec is None:
+            return False
+        return self._try(lambda: self.doc.set_param(bid, "chart", dlg.result_spec))
 
     def apply_props(self) -> None:
         bid = self.current_block

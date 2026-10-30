@@ -9,7 +9,8 @@ Two test kinds, as in industry MIL practice:
 
 Signal definitions (piecewise in time, seconds):
     {"const": v} | {"step": {"t": 1.0, "before": 0, "after": 1}} |
-    {"ramp": {"t0": 0, "slope": 1, "start": 0}} | {"points": [[t, v], ...]}  (linear interpolation)
+    {"ramp": {"t0": 0, "slope": 1, "start": 0}} | {"points": [[t, v], ...]}  (linear interpolation) |
+    {"pulse": {"t0": 0.5, "t1": 0.6, "low": 0, "high": 1}}  (high for t0 <= t < t1)
 """
 from __future__ import annotations
 
@@ -30,6 +31,10 @@ def signal_value(spec: dict, t: float) -> float:
     if "ramp" in spec:
         r = spec["ramp"]
         return float(r.get("start", 0.0)) + float(r["slope"]) * max(0.0, t - float(r.get("t0", 0.0)))
+    if "pulse" in spec:
+        q = spec["pulse"]
+        on = float(q["t0"]) - 1e-12 <= t < float(q["t1"]) - 1e-12
+        return float(q.get("high", 1.0) if on else q.get("low", 0.0))
     if "points" in spec:
         pts = spec["points"]
         if t <= pts[0][0]:
