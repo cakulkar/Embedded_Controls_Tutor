@@ -101,3 +101,70 @@ class RecordingEngine:
 
 def fake_double(rows):
     return [list(r) for r in rows]
+
+
+# ---- synthetic .slx writer (Simulink file layout) for import tests ---------------------
+def write_slx(model: dict, path, split_systems: bool = True, fixed_step: str | None = None,
+              omit_defaults: bool = True, extra_blocks: list[str] | None = None) -> None:
+    """Write an .slx-layout zip from an ECSim model, using Simulink BlockType names and
+    parameter names. `omit_defaults` drops values equal to Simulink defaults, as Simulink does."""
+    import zipfile
+    from xml.sax.saxutils import escape
+    from ecsim.model.slx import _DEFAULTS, _TYPE_MAP, _block_args
+    rev = {v: k for k, v in _TYPE_MAP.items()}
+    systems: dict[str, str] = {}
+    counter = [0]
+
+    def sys_xml(m: dict) -> str:
+        sid_of, blocks_xml = {}, []
+        for b in m["blocks"]:
+            counter[0] += 1
+            sid = str(counter[0])
+            sid_of[b["id"]] = sid
+            stype = rev[b["type"]]
+            params = dict(_block_args(b))
+            if omit_defaults:
+                for k, v in _DEFAULTS.get(stype, {}).items():
+                    if params.get(k) == v:
+                        params.pop(k)
+            x, y = b.get("pos", [50, 50])
+            params["Position"] = f"[{int(x)}, {int(y)}, {int(x) + 30}, {int(y) + 30}]"
+            ps = "".join(f'<P Name="{k}">{escape(str(v))}</P>' for k, v in params.items())
+            inner = ""
+            if b["type"] == "Subsystem":
+                inner = sys_ref(b["params"]["model"])
+            blocks_xml.append(f'<Block BlockType="{stype}" Name="{escape(b["id"])}" SID="{sid}">{ps}{inner}</Block>')
+        for i, extra in enumerate(extra_blocks or []):
+            blocks_xml.append(f'<Block BlockType="{extra}" Name="Unsupported {i}" SID="9{i}"/>')
+        by_src: dict[str, list[str]] = {}
+        for ln in m["lines"]:
+            by_src.setdefault(ln["src"], []).append(ln["dst"])
+        lines_xml = []
+        for src, dsts in by_src.items():
+            sb, sp = src.rsplit(":", 1)
+            s = f'<P Name="Src">{sid_of[sb]}#out:{sp}</P>'
+            ds = [f'<P Name="Dst">{sid_of[d.rsplit(":", 1)[0]]}#in:{d.rsplit(":", 1)[1]}</P>' for d in dsts]
+            if len(ds) == 1:
+                lines_xml.append(f"<Line>{s}{ds[0]}</Line>")
+            else:   # fan-out is stored as branches
+                lines_xml.append(f"<Line>{s}" + "".join(f"<Branch>{d}</Branch>" for d in ds) + "</Line>")
+        return "<System>" + "".join(blocks_xml) + "".join(lines_xml) + "</System>"
+
+    def sys_ref(m: dict) -> str:
+        body = sys_xml(m)
+        if split_systems:
+            ref = f"system_{len(systems) + 1}"
+            systems[ref] = body
+            return f'<System Ref="{ref}"/>'
+        return body
+
+    root = sys_ref(model)
+    bd = f'<?xml version="1.0" encoding="utf-8"?><ModelInformation Version="1.0"><Model Name="{model["name"]}">{root}</Model></ModelInformation>'
+    step = fixed_step if fixed_step is not None else repr(model["solver"]["step"])
+    cfg = (f'<?xml version="1.0" encoding="utf-8"?><ConfigSet><P Name="SolverType">Fixed-step</P>'
+           f'<P Name="FixedStep">{step}</P></ConfigSet>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("simulink/blockdiagram.xml", bd)
+        z.writestr("simulink/configSet0.xml", cfg)
+        for ref, body in systems.items():
+            z.writestr(f"simulink/systems/{ref}.xml", body)

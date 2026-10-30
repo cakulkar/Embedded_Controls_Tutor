@@ -117,3 +117,23 @@ Until this is done, the Simulink backend is labelled unverified.
 - Learners without MATLAB author models as JSON until the Phase 4 editor lands.
 - Scalar doubles only; no buses, vectors or fixed-point yet.
 - Closed-loop plant library contains the DC motor only.
+
+## Phase 4 — Control Model Studio — **DONE (2026-10-29)**
+
+| Item | Evidence |
+|---|---|
+| Qt-free `ModelDocument`: add/remove/rename/move/connect/disconnect, params, sample times, solver step, full undo/redo, dangling-line pruning in the same undo step, port renumbering | `test_model_document.py` |
+| Create subsystem from selection (behaviour-preserving), edit inside subsystems | `test_group_into_subsystem_preserves_behaviour`, `test_subsystem_navigation_and_edit` |
+| Canvas: palette drag/double-click, wiring by mouse drag, move by mouse (undoable), delete, zoom, feedback-wire routing | `test_wire_by_mouse_drag`, `test_move_block_by_mouse_is_undoable` |
+| Properties panel with validation; Simulink library path shown per block | `test_properties_panel_edits_and_validates` |
+| Simulate (open loop / closed loop with DC motor) with plots | `test_simulate_open_and_closed_loop` |
+| Grade directly from the Studio; "Open in Model Studio" from the Academy | `test_grade_from_studio`, `test_open_in_studio_from_academy` |
+| `.slx` import: R2012b+ inline and R2019+ split-system layouts, Simulink defaults, fan-out branches, nested subsystems, workspace variables from `.m` | `test_slx_interop.py` |
+| Export: MATLAB build script (`new_system`/`add_block`/`add_line`) | `test_export_build_script` |
+
+Bugs found and fixed while testing: the exporter's parameter map was evaluated for every block type;
+`.m` files with several statements per line failed to parse; and the properties panel dropped
+later edits when one Apply changed several fields.
+
+**Verification note:** `.slx` import is tested against files produced in Simulink's documented XML
+layout by a test writer, not against files saved by MATLAB. Please import a few of your own models.

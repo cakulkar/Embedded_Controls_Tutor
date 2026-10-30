@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBo
 
 from ecsim import __version__
 from ecsim.app.services import AppContext, bootstrap
-from ecsim.gui.screens import AcademyScreen, CompetencyScreen, DashboardScreen, EcuLabScreen, PlannedScreen
+from ecsim.gui.screens import AcademyScreen, CompetencyScreen, DashboardScreen, EcuLabScreen, ModelStudioScreen, PlannedScreen
 from ecsim.gui.widgets import THEME
 
 # (title, phase, planned scope) for screens delivered after Phase 1.
@@ -18,11 +18,6 @@ PLANNED = {
                            "Assignments such as Task #001 (3,000 rpm motor speed controller) with V-model deliverables",
                            "Injected incidents: oscillation, sensor offset, CAN loss, missed deadlines, regressions",
                            "Persona reviewers: tech lead, systems, architect, calibration, test, safety, PM, OEM"]),
-    "Control Model Studio": (4, ["Drag-and-drop executable block diagrams, subsystems, sample times",
-                                 "Required block library (math, control, logic, dynamic, discrete, automotive, BMS, driveline, safety)",
-                                 "State machines, lookup tables, C code generation for supported blocks",
-                                 "Model ↔ generated-C back-to-back comparison",
-                                 "Engine and MIL grading already work (Phase 3): use the Academy and `ecsim model check`"]),
     "Vehicle & Machine Simulator": (9, ["Engine, e-motor, inverter, battery, transmission, clutch, differential",
                                         "Vehicle dynamics, hydraulic pump/cylinder, steering, brakes, HVAC",
                                         "Radar/camera abstractions; lock-step with the virtual ECU"]),
@@ -70,6 +65,8 @@ class MainWindow(QMainWindow):
                 w = DashboardScreen(ctx, learner_id)
             elif name == "Learning Academy":
                 w = AcademyScreen(ctx, learner_id, on_change=self.refresh_all)
+            elif name == "Control Model Studio":
+                w = ModelStudioScreen(ctx, learner_id)
             elif name == "Virtual ECU Lab":
                 w = EcuLabScreen(ctx, learner_id)
             elif name == "Competency & Certification":
@@ -81,6 +78,7 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(w)
             label = name if name not in PLANNED else f"{name}   · P{PLANNED[name][0]}"
             self.nav.addItem(label)
+        self.screens["Learning Academy"].exercise_view.open_in_studio = self.open_in_studio
         self.nav.currentRowChanged.connect(self._go)
         self.nav.setCurrentRow(0)
         self.statusBar().showMessage(f"Offline · data in {ctx.settings.home}")
@@ -94,6 +92,14 @@ class MainWindow(QMainWindow):
     def show_screen(self, name: str) -> QWidget:
         self.nav.setCurrentRow(SCREEN_ORDER.index(name))
         return self.screens[name]
+
+    def open_in_studio(self, model_json: str) -> None:
+        from ecsim.model.document import ModelDocument
+        studio = self.show_screen("Control Model Studio")
+        studio.load_document(ModelDocument.from_json(model_json))
+        idx = studio.grade_ex.findData(self.screens["Learning Academy"].exercise_view.ex.id)
+        if idx >= 0:
+            studio.grade_ex.setCurrentIndex(idx)
 
     def refresh_all(self) -> None:
         for name in ("Engineering Dashboard", "Competency & Certification"):
