@@ -57,7 +57,7 @@ class SignalPlot(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor("white"))
-        m_l, m_r, m_t, m_b = 58, 12, 24, 26
+        m_l, m_r, m_t, m_b = 58, 12, 40, 26   # title row + legend row above the plot area
         area = QRectF(m_l, m_t, max(10, self.width() - m_l - m_r), max(10, self.height() - m_t - m_b))
         x0, x1, y0, y1 = self._ranges()
 
@@ -76,8 +76,9 @@ class SignalPlot(QWidget):
             p.drawLine(QPointF(area.left(), Y(yv)), QPointF(area.right(), Y(yv)))
             p.setPen(QColor("#5b6573"))
             p.drawText(QRectF(0, Y(yv) - 8, m_l - 6, 16), Qt.AlignRight | Qt.AlignVCenter, f"{yv:.0f}")
-        for k in range(7):
-            xv = x0 + (x1 - x0) * k / 6
+        nx = max(2, min(6, int(area.width() // 80)))       # avoid crowded labels in narrow plots
+        for k in range(nx + 1):
+            xv = x0 + (x1 - x0) * k / nx
             p.setPen(grid)
             p.drawLine(QPointF(X(xv), area.top()), QPointF(X(xv), area.bottom()))
             p.setPen(QColor("#5b6573"))
@@ -105,12 +106,11 @@ class SignalPlot(QWidget):
             p.setPen(pen)
             p.drawPath(path)
         p.setClipping(False)
-        lx = area.right() - 10
-        for s in reversed(self.series):
-            w = p.fontMetrics().horizontalAdvance(s.name) + 26
-            lx -= w
+        lx = area.left()
+        for s in self.series:                       # legend on its own row under the title
             p.setPen(QPen(QColor(s.color), 2))
-            p.drawLine(QPointF(lx, 12), QPointF(lx + 16, 12))
+            p.drawLine(QPointF(lx, 30), QPointF(lx + 16, 30))
             p.setPen(QColor("#1d2430"))
-            p.drawText(QPointF(lx + 20, 16), s.name)
+            p.drawText(QPointF(lx + 20, 34), s.name)
+            lx += p.fontMetrics().horizontalAdvance(s.name) + 34
         p.end()
