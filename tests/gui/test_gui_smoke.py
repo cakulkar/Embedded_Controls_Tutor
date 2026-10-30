@@ -132,3 +132,17 @@ def test_can_analyzer_screen(win):
     can.wait(6000)
     assert "default" in can.state.text() and "S3 timeout" in can.uds_log.toPlainText()
     assert not can.load_dbc_text("BO_ 1 M: 1 N\n SG_ a : 4|8@1+ (1,0) [0|1] \"\" X\n", "bad.dbc")
+
+
+def test_plant_simulator_screen(app, ctx, learner):
+    from ecsim.gui.screens.plant_sim import PlantSimScreen
+    from ecsim.plants.explorer import SCENARIOS
+    s = PlantSimScreen(ctx, learner)
+    for i, key in enumerate(SCENARIOS):
+        s.combo.setCurrentIndex(i)
+        assert set(s.spins) == {p.key for p in SCENARIOS[key].params}
+        assert len(s.plot_widgets) == len(SCENARIOS[key].run().panels)
+        assert "Error" not in s.summary.text()
+    s.combo.setCurrentIndex(list(SCENARIOS).index("precharge"))
+    s.spins["r_pre"].setValue(100); s.run()
+    assert "95 % reached at 300 ms" in s.summary.text()

@@ -44,6 +44,19 @@ class EcsimStandInSession:
             w = plant.a * w + plant.bv * v - plant.bt * load
         return t, y
 
+    def sim_precharge(self, name, coeffs, u, stop, ts):
+        """Executes the same block equations as PRECHARGE_HARNESS (Unit Delay + two Switches)."""
+        sim = Simulator(self.loaded[name])
+        vl, t, y = 0.0, [], []
+        for tk, req, opened in u:
+            k_pre, k_main, fault = sim.step([req, coeffs["v_pack"], vl])
+            t.append(tk)
+            y.append([vl, k_pre, k_main, fault])
+            charge = coeffs["a"] * vl + coeffs["c"]
+            sel_pre = charge if k_pre * (1 - opened) > 0.5 else coeffs["b"] * vl
+            vl = coeffs["v_pack"] if k_main > 0.5 else sel_pre
+        return t, y
+
     def close(self, name):
         self.closed.append(name)
 

@@ -61,6 +61,66 @@ ecsim_t = ecsim_out.get('tout'); ecsim_y = ecsim_out.get('yout');
 close_system(ecsim_h, 0);
 """
 
+# HV precharge plant built from standard blocks. External inputs: hv_request, resistor_open (0/1).
+# v_link(k+1) = k_main ? v_pack : (k_precharge AND NOT open) ? v_pack + (v_link - v_pack)*a : v_link*b
+PRECHARGE_HARNESS = """\
+ecsim_h = 'ecsim_pc_harness';
+if bdIsLoaded(ecsim_h), close_system(ecsim_h, 0); end
+new_system(ecsim_h);
+set_param(ecsim_h, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete', 'FixedStep', '{ts:.17g}', 'StopTime', '{stop:.17g}');
+add_block('simulink/Sources/In1', [ecsim_h '/hv_request']);
+add_block('simulink/Sources/In1', [ecsim_h '/resistor_open']);
+add_block('simulink/Sources/Constant', [ecsim_h '/v_pack'], 'Value', '{v_pack:.17g}');
+add_block('simulink/Ports & Subsystems/Model', [ecsim_h '/ctrl'], 'ModelName', '{name}');
+add_block('simulink/Discrete/Unit Delay', [ecsim_h '/v_link'], 'InitialCondition', '0', 'SampleTime', '{ts:.17g}');
+add_block('simulink/Math Operations/Gain', [ecsim_h '/charge_a'], 'Gain', '{a:.17g}');
+add_block('simulink/Sources/Constant', [ecsim_h '/charge_c'], 'Value', '{c:.17g}');
+add_block('simulink/Math Operations/Sum', [ecsim_h '/charge'], 'Inputs', '++');
+add_block('simulink/Math Operations/Gain', [ecsim_h '/bleed'], 'Gain', '{b:.17g}');
+add_block('simulink/Sources/Constant', [ecsim_h '/one'], 'Value', '1');
+add_block('simulink/Math Operations/Sum', [ecsim_h '/intact'], 'Inputs', '+-');
+add_block('simulink/Math Operations/Product', [ecsim_h '/pre_eff'], 'Inputs', '2');
+add_block('simulink/Signal Routing/Switch', [ecsim_h '/sel_pre'], 'Criteria', 'u2 > Threshold', 'Threshold', '0.5');
+add_block('simulink/Signal Routing/Switch', [ecsim_h '/sel_main'], 'Criteria', 'u2 > Threshold', 'Threshold', '0.5');
+add_block('simulink/Sinks/Out1', [ecsim_h '/v_link_V']);
+add_block('simulink/Sinks/Out1', [ecsim_h '/k_precharge']);
+add_block('simulink/Sinks/Out1', [ecsim_h '/k_main']);
+add_block('simulink/Sinks/Out1', [ecsim_h '/fault']);
+add_line(ecsim_h, 'hv_request/1', 'ctrl/1');
+add_line(ecsim_h, 'v_pack/1', 'ctrl/2');
+add_line(ecsim_h, 'v_link/1', 'ctrl/3');
+add_line(ecsim_h, 'v_link/1', 'charge_a/1');
+add_line(ecsim_h, 'charge_a/1', 'charge/1');
+add_line(ecsim_h, 'charge_c/1', 'charge/2');
+add_line(ecsim_h, 'v_link/1', 'bleed/1');
+add_line(ecsim_h, 'one/1', 'intact/1');
+add_line(ecsim_h, 'resistor_open/1', 'intact/2');
+add_line(ecsim_h, 'ctrl/1', 'pre_eff/1');
+add_line(ecsim_h, 'intact/1', 'pre_eff/2');
+add_line(ecsim_h, 'charge/1', 'sel_pre/1');
+add_line(ecsim_h, 'pre_eff/1', 'sel_pre/2');
+add_line(ecsim_h, 'bleed/1', 'sel_pre/3');
+add_line(ecsim_h, 'v_pack/1', 'sel_main/1');
+add_line(ecsim_h, 'ctrl/2', 'sel_main/2');
+add_line(ecsim_h, 'sel_pre/1', 'sel_main/3');
+add_line(ecsim_h, 'sel_main/1', 'v_link/1');
+add_line(ecsim_h, 'v_link/1', 'v_link_V/1');
+add_line(ecsim_h, 'ctrl/1', 'k_precharge/1');
+add_line(ecsim_h, 'ctrl/2', 'k_main/1');
+add_line(ecsim_h, 'ctrl/3', 'fault/1');
+ecsim_out = sim(ecsim_h, 'LoadExternalInput', 'on', 'ExternalInput', 'ecsim_u', 'SaveOutput', 'on', 'OutputSaveName', 'yout', 'SaveTime', 'on', 'TimeSaveName', 'tout', 'SaveFormat', 'Array', 'ReturnWorkspaceOutputs', 'on');
+ecsim_t = ecsim_out.get('tout'); ecsim_y = ecsim_out.get('yout');
+close_system(ecsim_h, 0);
+"""
+PRECHARGE_PORTS = (["hv_request", "v_pack_V", "v_link_V"], ["k_precharge", "k_main", "fault"])
+
+
+def precharge_coefficients(r_pre: float, c_link: float, v_pack: float, ts: float) -> dict:
+    """Exact discretisation of the ECSim precharge circuit (identical to PrechargeCircuit.step)."""
+    import math
+    a = math.exp(-ts / (r_pre * c_link))
+    return {"a": a, "c": v_pack * (1.0 - a), "b": math.exp(-ts / 5.0), "v_pack": v_pack}
+
 
 def matlab_engine_available() -> bool:
     try:
@@ -76,6 +136,8 @@ class Session(Protocol):
     def sim_open_loop(self, name: str, u: list[list[float]], stop: float) -> tuple[list[float], list[list[float]]]: ...
     def sim_closed_loop(self, name: str, plant: DiscreteMotor, u: list[list[float]], stop: float,
                         ts: float) -> tuple[list[float], list[list[float]]]: ...
+    def sim_precharge(self, name: str, coeffs: dict, u: list[list[float]], stop: float,
+                      ts: float) -> tuple[list[float], list[list[float]]]: ...
     def close(self, name: str) -> None: ...
 
 
@@ -155,6 +217,12 @@ class EngineSession:
         self._call("building and simulating the closed-loop harness", self.eng.eval, script, nargout=0)
         return self._result()
 
+    def sim_precharge(self, name, coeffs, u, stop, ts):
+        script = PRECHARGE_HARNESS.format(name=name, ts=ts, stop=stop, **coeffs)
+        self.eng.workspace["ecsim_u"] = self.double(u)
+        self._call("building and simulating the precharge harness", self.eng.eval, script, nargout=0)
+        return self._result()
+
     def close(self, name: str) -> None:
         try:
             self.eng.close_system(name, 0.0, nargout=0)
@@ -224,6 +292,12 @@ class SimulinkBackend:
         return TestTrace(ts, sig)
 
     def run_closed_loop(self, h: dict, test: dict, step: float) -> TestTrace:
+        plant = test.get("plant", "dc_motor")
+        if plant == "precharge":
+            return self._precharge(h, test, step)
+        if plant != "dc_motor":
+            raise ModelError(f"closed-loop tests with the '{plant}' plant run on the ECSim engine only in this "
+                             "release; submit an ECSim model (e.g. import your .slx in the Model Studio)")
         _, outs = self.interface(h)
         n = n_samples(float(test["duration"]), step)
         ts = [k * step for k in range(n)]
@@ -233,3 +307,22 @@ class SimulinkBackend:
         self._check_len(t, n)
         return TestTrace(ts, {"speed_rpm": [r[0] for r in y], outs[0]: [r[1] for r in y],
                               "motor_voltage_V": [r[2] for r in y]})
+
+    def _precharge(self, h: dict, test: dict, step: float) -> TestTrace:
+        ins, outs = self.interface(h)
+        if (ins, outs) != PRECHARGE_PORTS:
+            raise ModelError(f"precharge harness needs inports {PRECHARGE_PORTS[0]} and outports {PRECHARGE_PORTS[1]} "
+                             f"in this order; the model has {ins} / {outs}")
+        pp = test.get("plant_params", {})
+        coeffs = precharge_coefficients(float(pp.get("r_pre", 50.0)), float(pp.get("c_link", 0.001)), 400.0, step)
+        open_at = pp.get("resistor_open_at")
+        n = n_samples(float(test["duration"]), step)
+        ts = [k * step for k in range(n)]
+        u = [[t, signal_value(test["hv_request"], t),
+              1.0 if open_at is not None and t >= float(open_at) - 1e-12 else 0.0] for t in ts]
+        t, y = self.session.sim_precharge(h["name"], coeffs, u, (n - 1) * step, step)
+        self._check_len(t, n)
+        sig = {"hv_request": [r[1] for r in u], "v_pack_V": [coeffs["v_pack"]] * n, "v_link_V": [r[0] for r in y]}
+        for j, name in enumerate(outs):
+            sig[name] = [r[j + 1] for r in y]
+        return TestTrace(ts, sig)

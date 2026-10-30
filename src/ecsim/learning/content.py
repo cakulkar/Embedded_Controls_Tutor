@@ -228,7 +228,7 @@ def _validate_spec(kind: str, spec: dict, where: str) -> None:
             except ModelError as exc:
                 raise ContentError(f"{where}: {k} model does not compile: {exc}") from None
         for t in spec["tests"]:
-            if t.get("type") not in ("open_loop", "closed_loop") or not t.get("checks"):
+            if t.get("type") not in ("open_loop", "closed_loop", "plant_driven") or not t.get("checks"):
                 raise ContentError(f"{where}: test {t.get('name')} needs a type and at least one check")
 
 

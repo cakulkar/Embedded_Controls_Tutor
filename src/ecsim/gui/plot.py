@@ -23,10 +23,21 @@ class Marker:
     color: str
 
 
+def tick_label(v: float, span: float) -> str:
+    """Enough decimals that neighbouring ticks (span/4 apart) are distinguishable."""
+    import math
+    step = abs(span) / 4 or 1.0
+    dec = max(0, min(6, -math.floor(math.log10(step)) + 1)) if step < 1 else 0
+    if abs(v) < 0.5 * 10 ** -dec:
+        v = 0.0
+    return f"{v:.{dec}f}"
+
+
 class SignalPlot(QWidget):
-    def __init__(self, title: str, unit: str, parent=None) -> None:
+    def __init__(self, title: str, unit: str, parent=None, time_in_ms: bool = True) -> None:
         super().__init__(parent)
         self.title, self.unit = title, unit
+        self.time_in_ms = time_in_ms
         self.t: list[float] = []
         self.series: list[Series] = []
         self.markers: list[Marker] = []
@@ -75,14 +86,15 @@ class SignalPlot(QWidget):
             p.setPen(grid)
             p.drawLine(QPointF(area.left(), Y(yv)), QPointF(area.right(), Y(yv)))
             p.setPen(QColor("#5b6573"))
-            p.drawText(QRectF(0, Y(yv) - 8, m_l - 6, 16), Qt.AlignRight | Qt.AlignVCenter, f"{yv:.0f}")
+            p.drawText(QRectF(0, Y(yv) - 8, m_l - 6, 16), Qt.AlignRight | Qt.AlignVCenter, tick_label(yv, y1 - y0))
         nx = max(2, min(6, int(area.width() // 80)))       # avoid crowded labels in narrow plots
         for k in range(nx + 1):
             xv = x0 + (x1 - x0) * k / nx
             p.setPen(grid)
             p.drawLine(QPointF(X(xv), area.top()), QPointF(X(xv), area.bottom()))
             p.setPen(QColor("#5b6573"))
-            p.drawText(QRectF(X(xv) - 30, area.bottom() + 4, 60, 16), Qt.AlignCenter, f"{xv/1000:.1f} s")
+            p.drawText(QRectF(X(xv) - 30, area.bottom() + 4, 60, 16), Qt.AlignCenter, tick_label(xv / 1000 if self.time_in_ms else xv,
+                                                                                    (x1 - x0) / (1000 if self.time_in_ms else 1)) + " s")
         if self.band:
             p.fillRect(QRectF(area.left(), Y(self.band[1]), area.width(), Y(self.band[0]) - Y(self.band[1])),
                        QColor(47, 111, 222, 28))

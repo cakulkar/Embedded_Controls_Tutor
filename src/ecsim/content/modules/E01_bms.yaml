@@ -1,0 +1,5124 @@
+# Generated from verified models; edit freely, then run pytest.
+id: E01
+department: E
+title: 'Battery management: cell models, SOC estimation, contactor control'
+ordinal: 1
+version: '1'
+lessons:
+- id: E01-L1
+  title: Cell equivalent-circuit models
+  body: |
+    # What the BMS sees
+
+    A lithium-ion cell is modelled for control with a **Thevenin equivalent circuit**:
+
+    ```
+            R0          R1
+      +──/\/\/──┬──/\/\/──┬──(OCV(SOC))──  −
+                └───||───┘
+                    C1
+    ```
+
+    * **OCV(SOC)**: open-circuit voltage, a characteristic curve per chemistry and temperature.
+    * **R0**: instantaneous ohmic drop (`I·R0` appears the moment current flows).
+    * **R1‖C1**: polarisation, which builds up under load and relaxes over minutes after the current stops.
+
+    Terminal voltage `V = OCV(SOC) + I·R0 + V1` (charging current positive). Under a 50 A discharge, ECSim's
+    50 Ah cell shows ≈ 0.1 V of ohmic drop plus ≈ 0.075 V of polarisation, which on the OCV curve looks like
+    **tens of percent of SOC**. That is why voltage under load is useless for SOC.
+
+    ECSim's cell (Vehicle & Machine Simulator → *Battery cell*) uses this OCV curve:
+
+    | SOC % | 0 | 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100 |
+    |---|---|---|---|---|---|---|---|---|---|---|---|
+    | OCV V | 3.00 | 3.45 | 3.55 | 3.62 | 3.67 | 3.73 | 3.82 | 3.92 | 4.02 | 4.10 | 4.20 |
+
+    plus a lumped thermal model (Joule heat in R0 and R1, convection to 25 °C ambient).
+- id: E01-L2
+  title: 'SOC estimation: coulomb counting and OCV correction'
+  body: |
+    # Estimating state of charge
+
+    **Coulomb counting** integrates current: `SOC(k) = SOC(k−1) + I·Ts / (3600·Q)`. It is smooth and exact
+    *if* the current sensor is exact. A **2 A offset** on a 50 Ah cell drifts by **4 % per hour**, forever.
+
+    **OCV correction** reads SOC from the OCV curve, but only when the cell is **relaxed**: after the
+    current has been near zero long enough for the polarisation (R1·C1, ~30 s here) to decay. Five minutes
+    is a common rule. Two traps:
+
+    * Using the voltage under load → errors of tens of percent.
+    * Detecting "rest" with a current threshold *below the sensor's offset* → the measured current never
+      looks like rest, and the correction never runs.
+
+    Production BMSs combine both, often with a **Kalman filter** (EKF/UKF) that weights them continuously by
+    their uncertainty. The model-based building blocks are the same: a cell model, an OCV table, an integrator,
+    and logic deciding when to trust which.
+
+    ### Building it with blocks
+    A *resettable* coulomb counter needs no special block: `soc = Switch(use_ocv, soc_from_ocv, soc_prev + ΔSOC)`
+    with `soc_prev` a Unit Delay of `soc`. The rest timer works the same way.
+- id: E01-L3
+  title: Contactors, precharge and protection
+  body: |
+    # Connecting the HV battery
+
+    Closing the main contactor onto an empty DC-link capacitor would draw a huge inrush current and weld the
+    contacts. The sequence is:
+
+    1. Close the **negative** and **precharge** contactors (precharge resistor in series).
+    2. Wait until the link voltage reaches **≈ 95 % of pack voltage**. With RC precharge that takes ≈ 3·R·C;
+       check the *voltage*, not a fixed time, because R and C vary with temperature and ageing.
+    3. Close the **main positive** contactor, then open the precharge contactor.
+    4. **Timeout:** if 95 % is not reached in time (open resistor, short in the load), open everything and set
+       a latched fault. Do not try again automatically.
+
+    Protection functions (over/under-voltage, over-current, over-temperature, isolation monitoring) follow the
+    detect → debounce → react → report chain from module A04. Cell balancing (passive bleed resistors)
+    equalises SOC between series cells, typically at rest near full charge.
+
+    Exercise E01-E6 models the sequencer as a state machine against ECSim's precharge-circuit plant.
+exercises:
+- id: E01-E1
+  kind: numeric
+  title: Coulomb counting
+  competency: VEH
+  level: beginner
+  points: 10
+  prompt: |
+    A 50 Ah cell is discharged at a constant 25 A for 30 minutes. By how many percentage points does its SOC drop?
+  spec:
+    answer: 25
+    abs_tol: 0.01
+    unit: '%'
+  hints:
+  - Charge removed in Ah, divided by capacity.
+  solution: |
+    25 A × 0.5 h = 12.5 Ah → 12.5 / 50 = **25 %**.
+- id: E01-E2
+  kind: numeric
+  title: Drift from a sensor offset
+  competency: VEH
+  level: intermediate
+  points: 10
+  prompt: |
+    A current sensor reads 2 A too high. How much SOC error (percentage points) does pure coulomb counting accumulate on a 50 Ah cell in one hour?
+  spec:
+    answer: 4
+    abs_tol: 0.01
+    unit: '%'
+  hints:
+  - The offset is integrated like real current.
+  solution: |
+    2 A × 1 h = 2 Ah → 2 / 50 = **4 %** per hour, growing without bound unless something corrects it.
+- id: E01-E3
+  kind: numeric
+  title: Precharge time
+  competency: VEH
+  level: intermediate
+  points: 10
+  prompt: |
+    Precharge resistor 50 Ω, DC-link capacitance 1 mF. How long (ms) until the link reaches 95 % of the pack voltage? (±1 ms)
+  spec:
+    answer: 149.8
+    abs_tol: 1
+    unit: ms
+  hints:
+  - V(t) = V_pack·(1 − e^(−t/RC)). Solve for 0.95.
+  solution: |
+    τ = RC = 50 ms; t = τ·ln(20) = 50 × 2.996 = **149.8 ms** (≈ 3τ).
+- id: E01-E4
+  kind: choice
+  title: When to trust the voltage
+  competency: VEH
+  level: intermediate
+  points: 10
+  prompt: |
+    Why must an OCV-based SOC correction wait for the cell to rest several minutes?
+  spec:
+    options:
+    - The voltage sensor needs time to warm up.
+    - Under load and shortly after, terminal voltage includes I·R0 and the decaying polarisation voltage, so it is not the OCV.
+    - OCV only exists at full charge.
+    - To save CPU load.
+    correct:
+    - 1
+  hints:
+  - 'Look at the equivalent circuit: which terms vanish only after the current has been zero for a while?'
+  solution: |
+    **Polarisation.** I·R0 vanishes immediately at zero current, but the RC branch takes several time constants to relax.
+- id: E01-E5
+  kind: model_mil
+  title: SOC estimator robust to sensor offset (MIL)
+  competency: VEH
+  level: advanced
+  points: 45
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    Model a **SOC estimator** for the 50 Ah cell, step **1 s**. It is tested against ECSim's cell plant over a 1-hour
+    drive cycle with a **+2 A current-sensor offset**.
+
+    | Inports | Outport |
+    |---|---|
+    | 1 `current_A` (measured, + = charging) · 2 `voltage_V` (terminal) · 3 `temp_degC` | 1 `soc_pct` |
+
+    | ID | Requirement |
+    |---|---|
+    | REQ-S1 | Initial estimate (cell at rest at start) within ±2 % |
+    | REQ-S2 | Error within ±5 % under load |
+    | REQ-S3 | After ≥ 5 min of rest, error within ±1.5 % |
+    | REQ-S4 | Error within ±3 % at the end of the cycle |
+
+    OCV curve: see lesson E01-L1 (use a 1-D Lookup Table from voltage to SOC). Unused inputs may go to a Terminator.
+  spec:
+    interface:
+      inports:
+      - current_A
+      - voltage_V
+      - temp_degC
+      outports:
+      - soc_pct
+      step: 1.0
+    tests:
+    - name: drive cycle, 2 A current-sensor offset
+      type: plant_driven
+      plant: battery_cell
+      duration: 3600
+      plant_params:
+        soc0: 0.8
+        current_offset_A: 2.0
+      current_profile:
+        points:
+        - - 0
+          - 0
+        - - 119.9
+          - 0
+        - - 120
+          - -50
+        - - 1019.9
+          - -50
+        - - 1020
+          - 0
+        - - 1919.9
+          - 0
+        - - 1920
+          - -30
+        - - 2519.9
+          - -30
+        - - 2520
+          - 20
+        - - 2819.9
+          - 20
+        - - 2820
+          - 0
+        - - 3600
+          - 0
+      errors:
+        soc_pct: soc_true_pct
+      checks:
+      - name: REQ-S1 initial estimate from rest voltage within ±2 %
+        kind: near
+        signal: soc_pct_error
+        target: 0
+        tol: 2
+        from: 0
+        to: 100
+      - name: REQ-S2 error within ±5 % under load
+        kind: near
+        signal: soc_pct_error
+        target: 0
+        tol: 5
+        from: 120
+        to: 1019
+      - name: REQ-S3 re-calibrated to ±1.5 % after 5 min rest
+        kind: near
+        signal: soc_pct_error
+        target: 0
+        tol: 1.5
+        from: 1400
+        to: 1919
+      - name: REQ-S4 error ±3 % at the end of the cycle
+        kind: near
+        signal: soc_pct_error
+        target: 0
+        tol: 3
+        from: 3300
+        to: 3600
+    - name: start at low SOC, no offset
+      type: plant_driven
+      plant: battery_cell
+      duration: 600
+      plant_params:
+        soc0: 0.25
+      current_profile:
+        const: 0
+      errors:
+        soc_pct: soc_true_pct
+      checks:
+      - name: REQ-S1 initial estimate within ±2 % at low SOC
+        kind: near
+        signal: soc_pct_error
+        target: 0
+        tol: 2
+        from: 0
+    starter: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              100
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              500,
+              100
+            ]
+          },
+          {
+            "id": "todo",
+            "type": "Constant",
+            "params": {
+              "value": 50
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "t1",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              200,
+              0
+            ]
+          },
+          {
+            "id": "t2",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              200,
+              100
+            ]
+          },
+          {
+            "id": "t3",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              200,
+              200
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "todo:1",
+            "dst": "soc_pct:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "t1:1"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "t2:1"
+          },
+          {
+            "src": "temp_degC:1",
+            "dst": "t3:1"
+          }
+        ]
+      }
+    reference: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 300
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    mutants:
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 1000000000.0
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 300
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "NAND",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 300
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": -0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 300
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 2.0
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 3.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 0
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "soc_estimator",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 1.0
+        },
+        "blocks": [
+          {
+            "id": "current_A",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "current_A"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "voltage_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "voltage_V"
+            },
+            "pos": [
+              0,
+              200
+            ]
+          },
+          {
+            "id": "temp_degC",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "temp_degC"
+            },
+            "pos": [
+              0,
+              320
+            ]
+          },
+          {
+            "id": "soc_pct",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "soc_pct"
+            },
+            "pos": [
+              1100,
+              120
+            ]
+          },
+          {
+            "id": "temp_unused",
+            "type": "Terminator",
+            "params": {},
+            "pos": [
+              160,
+              320
+            ]
+          },
+          {
+            "id": "abs_i",
+            "type": "Abs",
+            "params": {},
+            "pos": [
+              160,
+              0
+            ]
+          },
+          {
+            "id": "rest_lim",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              160,
+              60
+            ]
+          },
+          {
+            "id": "is_rest",
+            "type": "RelationalOperator",
+            "params": {
+              "op": "<"
+            },
+            "pos": [
+              300,
+              20
+            ]
+          },
+          {
+            "id": "ts",
+            "type": "Constant",
+            "params": {
+              "value": 1.0
+            },
+            "pos": [
+              300,
+              100
+            ]
+          },
+          {
+            "id": "timer_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              300,
+              160
+            ]
+          },
+          {
+            "id": "timer_inc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          },
+          {
+            "id": "zero",
+            "type": "Constant",
+            "params": {
+              "value": 0.0
+            },
+            "pos": [
+              440,
+              200
+            ]
+          },
+          {
+            "id": "rest_timer",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              580,
+              100
+            ]
+          },
+          {
+            "id": "relax_time",
+            "type": "Constant",
+            "params": {
+              "value": 300
+            },
+            "pos": [
+              580,
+              200
+            ]
+          },
+          {
+            "id": "relaxed",
+            "type": "RelationalOperator",
+            "params": {
+              "op": ">="
+            },
+            "pos": [
+              720,
+              140
+            ]
+          },
+          {
+            "id": "first_step",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 1
+            },
+            "pos": [
+              720,
+              240
+            ]
+          },
+          {
+            "id": "use_ocv",
+            "type": "LogicalOperator",
+            "params": {
+              "op": "OR",
+              "inputs": 2
+            },
+            "pos": [
+              860,
+              180
+            ]
+          },
+          {
+            "id": "soc_from_ocv",
+            "type": "Lookup1D",
+            "params": {
+              "breakpoints": [
+                3.0,
+                3.45,
+                3.55,
+                3.62,
+                3.67,
+                3.73,
+                3.82,
+                3.92,
+                4.02,
+                4.1,
+                4.2
+              ],
+              "table": [
+                0.0,
+                10.0,
+                20.0,
+                30.0,
+                40.0,
+                50.0,
+                60.0,
+                70.0,
+                80.0,
+                90.0,
+                100.0
+              ],
+              "extrapolation": "clip"
+            },
+            "pos": [
+              300,
+              240
+            ]
+          },
+          {
+            "id": "dsoc",
+            "type": "Gain",
+            "params": {
+              "gain": 0.0005555555555555556
+            },
+            "pos": [
+              300,
+              -60
+            ]
+          },
+          {
+            "id": "soc_prev",
+            "type": "UnitDelay",
+            "params": {
+              "initial": 0
+            },
+            "pos": [
+              440,
+              -120
+            ]
+          },
+          {
+            "id": "soc_cc",
+            "type": "Sum",
+            "params": {
+              "signs": "++"
+            },
+            "pos": [
+              580,
+              -60
+            ]
+          },
+          {
+            "id": "soc",
+            "type": "Switch",
+            "params": {
+              "criteria": "u2 ~= 0",
+              "threshold": 0
+            },
+            "pos": [
+              960,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "temp_degC:1",
+            "dst": "temp_unused:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "abs_i:1"
+          },
+          {
+            "src": "abs_i:1",
+            "dst": "is_rest:1"
+          },
+          {
+            "src": "rest_lim:1",
+            "dst": "is_rest:2"
+          },
+          {
+            "src": "timer_prev:1",
+            "dst": "timer_inc:1"
+          },
+          {
+            "src": "ts:1",
+            "dst": "timer_inc:2"
+          },
+          {
+            "src": "timer_inc:1",
+            "dst": "rest_timer:1"
+          },
+          {
+            "src": "is_rest:1",
+            "dst": "rest_timer:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "rest_timer:3"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "timer_prev:1"
+          },
+          {
+            "src": "rest_timer:1",
+            "dst": "relaxed:1"
+          },
+          {
+            "src": "relax_time:1",
+            "dst": "relaxed:2"
+          },
+          {
+            "src": "zero:1",
+            "dst": "first_step:1"
+          },
+          {
+            "src": "first_step:1",
+            "dst": "use_ocv:1"
+          },
+          {
+            "src": "relaxed:1",
+            "dst": "use_ocv:2"
+          },
+          {
+            "src": "voltage_V:1",
+            "dst": "soc_from_ocv:1"
+          },
+          {
+            "src": "current_A:1",
+            "dst": "dsoc:1"
+          },
+          {
+            "src": "soc_prev:1",
+            "dst": "soc_cc:1"
+          },
+          {
+            "src": "dsoc:1",
+            "dst": "soc_cc:2"
+          },
+          {
+            "src": "soc_from_ocv:1",
+            "dst": "soc:1"
+          },
+          {
+            "src": "use_ocv:1",
+            "dst": "soc:2"
+          },
+          {
+            "src": "soc_cc:1",
+            "dst": "soc:3"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_prev:1"
+          },
+          {
+            "src": "soc:1",
+            "dst": "soc_pct:1"
+          }
+        ]
+      }
+  hints:
+  - Coulomb counting alone drifts 4 %/h with this sensor. What can correct it, and when is that correction valid?
+  - How does the 2 A offset affect your rest detection? Choose the current threshold above the worst-case offset.
+  solution: |
+    Rest timer (|I| < 3 A, above the 2 A offset) → after 300 s use the OCV table; otherwise coulomb counting from the previous estimate; first sample also uses the OCV.
+
+    ```json
+    {
+      "format": "ecsim-model",
+      "version": 1,
+      "name": "soc_estimator",
+      "solver": {
+        "type": "FixedStepDiscrete",
+        "step": 1.0
+      },
+      "blocks": [
+        {
+          "id": "current_A",
+          "type": "Inport",
+          "params": {
+            "port": 1,
+            "name": "current_A"
+          },
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "voltage_V",
+          "type": "Inport",
+          "params": {
+            "port": 2,
+            "name": "voltage_V"
+          },
+          "pos": [
+            0,
+            200
+          ]
+        },
+        {
+          "id": "temp_degC",
+          "type": "Inport",
+          "params": {
+            "port": 3,
+            "name": "temp_degC"
+          },
+          "pos": [
+            0,
+            320
+          ]
+        },
+        {
+          "id": "soc_pct",
+          "type": "Outport",
+          "params": {
+            "port": 1,
+            "name": "soc_pct"
+          },
+          "pos": [
+            1100,
+            120
+          ]
+        },
+        {
+          "id": "temp_unused",
+          "type": "Terminator",
+          "params": {},
+          "pos": [
+            160,
+            320
+          ]
+        },
+        {
+          "id": "abs_i",
+          "type": "Abs",
+          "params": {},
+          "pos": [
+            160,
+            0
+          ]
+        },
+        {
+          "id": "rest_lim",
+          "type": "Constant",
+          "params": {
+            "value": 3.0
+          },
+          "pos": [
+            160,
+            60
+          ]
+        },
+        {
+          "id": "is_rest",
+          "type": "RelationalOperator",
+          "params": {
+            "op": "<"
+          },
+          "pos": [
+            300,
+            20
+          ]
+        },
+        {
+          "id": "ts",
+          "type": "Constant",
+          "params": {
+            "value": 1.0
+          },
+          "pos": [
+            300,
+            100
+          ]
+        },
+        {
+          "id": "timer_prev",
+          "type": "UnitDelay",
+          "params": {
+            "initial": 0
+          },
+          "pos": [
+            300,
+            160
+          ]
+        },
+        {
+          "id": "timer_inc",
+          "type": "Sum",
+          "params": {
+            "signs": "++"
+          },
+          "pos": [
+            440,
+            120
+          ]
+        },
+        {
+          "id": "zero",
+          "type": "Constant",
+          "params": {
+            "value": 0.0
+          },
+          "pos": [
+            440,
+            200
+          ]
+        },
+        {
+          "id": "rest_timer",
+          "type": "Switch",
+          "params": {
+            "criteria": "u2 ~= 0",
+            "threshold": 0
+          },
+          "pos": [
+            580,
+            100
+          ]
+        },
+        {
+          "id": "relax_time",
+          "type": "Constant",
+          "params": {
+            "value": 300
+          },
+          "pos": [
+            580,
+            200
+          ]
+        },
+        {
+          "id": "relaxed",
+          "type": "RelationalOperator",
+          "params": {
+            "op": ">="
+          },
+          "pos": [
+            720,
+            140
+          ]
+        },
+        {
+          "id": "first_step",
+          "type": "UnitDelay",
+          "params": {
+            "initial": 1
+          },
+          "pos": [
+            720,
+            240
+          ]
+        },
+        {
+          "id": "use_ocv",
+          "type": "LogicalOperator",
+          "params": {
+            "op": "OR",
+            "inputs": 2
+          },
+          "pos": [
+            860,
+            180
+          ]
+        },
+        {
+          "id": "soc_from_ocv",
+          "type": "Lookup1D",
+          "params": {
+            "breakpoints": [
+              3.0,
+              3.45,
+              3.55,
+              3.62,
+              3.67,
+              3.73,
+              3.82,
+              3.92,
+              4.02,
+              4.1,
+              4.2
+            ],
+            "table": [
+              0.0,
+              10.0,
+              20.0,
+              30.0,
+              40.0,
+              50.0,
+              60.0,
+              70.0,
+              80.0,
+              90.0,
+              100.0
+            ],
+            "extrapolation": "clip"
+          },
+          "pos": [
+            300,
+            240
+          ]
+        },
+        {
+          "id": "dsoc",
+          "type": "Gain",
+          "params": {
+            "gain": 0.0005555555555555556
+          },
+          "pos": [
+            300,
+            -60
+          ]
+        },
+        {
+          "id": "soc_prev",
+          "type": "UnitDelay",
+          "params": {
+            "initial": 0
+          },
+          "pos": [
+            440,
+            -120
+          ]
+        },
+        {
+          "id": "soc_cc",
+          "type": "Sum",
+          "params": {
+            "signs": "++"
+          },
+          "pos": [
+            580,
+            -60
+          ]
+        },
+        {
+          "id": "soc",
+          "type": "Switch",
+          "params": {
+            "criteria": "u2 ~= 0",
+            "threshold": 0
+          },
+          "pos": [
+            960,
+            120
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "src": "temp_degC:1",
+          "dst": "temp_unused:1"
+        },
+        {
+          "src": "current_A:1",
+          "dst": "abs_i:1"
+        },
+        {
+          "src": "abs_i:1",
+          "dst": "is_rest:1"
+        },
+        {
+          "src": "rest_lim:1",
+          "dst": "is_rest:2"
+        },
+        {
+          "src": "timer_prev:1",
+          "dst": "timer_inc:1"
+        },
+        {
+          "src": "ts:1",
+          "dst": "timer_inc:2"
+        },
+        {
+          "src": "timer_inc:1",
+          "dst": "rest_timer:1"
+        },
+        {
+          "src": "is_rest:1",
+          "dst": "rest_timer:2"
+        },
+        {
+          "src": "zero:1",
+          "dst": "rest_timer:3"
+        },
+        {
+          "src": "rest_timer:1",
+          "dst": "timer_prev:1"
+        },
+        {
+          "src": "rest_timer:1",
+          "dst": "relaxed:1"
+        },
+        {
+          "src": "relax_time:1",
+          "dst": "relaxed:2"
+        },
+        {
+          "src": "zero:1",
+          "dst": "first_step:1"
+        },
+        {
+          "src": "first_step:1",
+          "dst": "use_ocv:1"
+        },
+        {
+          "src": "relaxed:1",
+          "dst": "use_ocv:2"
+        },
+        {
+          "src": "voltage_V:1",
+          "dst": "soc_from_ocv:1"
+        },
+        {
+          "src": "current_A:1",
+          "dst": "dsoc:1"
+        },
+        {
+          "src": "soc_prev:1",
+          "dst": "soc_cc:1"
+        },
+        {
+          "src": "dsoc:1",
+          "dst": "soc_cc:2"
+        },
+        {
+          "src": "soc_from_ocv:1",
+          "dst": "soc:1"
+        },
+        {
+          "src": "use_ocv:1",
+          "dst": "soc:2"
+        },
+        {
+          "src": "soc_cc:1",
+          "dst": "soc:3"
+        },
+        {
+          "src": "soc:1",
+          "dst": "soc_prev:1"
+        },
+        {
+          "src": "soc:1",
+          "dst": "soc_pct:1"
+        }
+      ]
+    }
+    ```
+- id: E01-E6
+  kind: model_mil
+  title: HV precharge and contactor sequencer (MIL)
+  competency: VEH
+  level: advanced
+  points: 40
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    Model the **HV contactor sequencer** (step **0.01 s**, a state machine is the natural choice). It runs in closed loop
+    with ECSim's precharge circuit (400 V pack, 50 Ω, 1 mF; in one test 100 Ω; in another the precharge resistor is open).
+
+    | Inports | Outports (0/1) |
+    |---|---|
+    | 1 `hv_request` · 2 `v_pack_V` · 3 `v_link_V` | 1 `k_precharge` · 2 `k_main` · 3 `fault` |
+
+    | ID | Requirement |
+    |---|---|
+    | REQ-P1 | All contactors open without a request |
+    | REQ-P2 | On request: close precharge, keep main open |
+    | REQ-P3 | Close main only when `v_link_V ≥ 95 %` of `v_pack_V` (voltage-based, not time-based) |
+    | REQ-P4 | After main is closed, open the precharge contactor |
+    | REQ-P5 | Precharge not complete within 0.5 s → fault: all contactors open, main never closes |
+    | REQ-P6 | No fault in normal operation; fault latched while the request stays on |
+    | REQ-P7 | Request removed → all contactors open |
+
+    This closed-loop plant runs on the ECSim engine (build in the Model Studio, or import your `.slx` there).
+  spec:
+    interface:
+      inports:
+      - hv_request
+      - v_pack_V
+      - v_link_V
+      outports:
+      - k_precharge
+      - k_main
+      - fault
+      step: 0.01
+    tests:
+    - name: normal power-up
+      type: closed_loop
+      plant: precharge
+      duration: 1.0
+      hv_request:
+        step:
+          t: 0.1
+          before: 0
+          after: 1
+      checks:
+      - name: REQ-P1 all open before request
+        kind: at
+        signal: k_precharge
+        t: 0.05
+        min: 0
+        max: 0
+      - name: REQ-P1 all open before request (main)
+        kind: at
+        signal: k_main
+        t: 0.05
+        min: 0
+        max: 0
+      - name: REQ-P2 precharge closes on request
+        kind: at
+        signal: k_precharge
+        t: 0.12
+        min: 1
+        max: 1
+      - name: REQ-P2 main stays open while precharging
+        kind: at
+        signal: k_main
+        t: 0.12
+        min: 0
+        max: 0
+      - name: REQ-P3 main closes only above 95 % of pack voltage
+        kind: within
+        signal: v_link_V
+        min: 380
+        from: 0.26
+        to: 0.27
+      - name: REQ-P3 main closed
+        kind: at
+        signal: k_main
+        t: 0.5
+        min: 1
+        max: 1
+      - name: REQ-P4 precharge relay opened after main closed
+        kind: at
+        signal: k_precharge
+        t: 0.5
+        min: 0
+        max: 0
+      - name: REQ-P6 no fault in normal operation
+        kind: at
+        signal: fault
+        t: 0.9
+        min: 0
+        max: 0
+    - name: main closes on voltage, not time
+      type: closed_loop
+      plant: precharge
+      plant_params:
+        r_pre: 100.0
+      duration: 1.0
+      hv_request:
+        step:
+          t: 0.1
+          before: 0
+          after: 1
+      checks:
+      - name: 'REQ-P3 slower precharge: main still open at 0.25 s'
+        kind: at
+        signal: k_main
+        t: 0.35
+        min: 0
+        max: 0
+      - name: REQ-P3 main closes once charged
+        kind: at
+        signal: k_main
+        t: 0.6
+        min: 1
+        max: 1
+    - name: open precharge resistor
+      type: closed_loop
+      plant: precharge
+      plant_params:
+        resistor_open_at: 0.0
+      duration: 1.5
+      hv_request:
+        step:
+          t: 0.1
+          before: 0
+          after: 1
+      checks:
+      - name: REQ-P5 no fault before 0.5 s
+        kind: at
+        signal: fault
+        t: 0.55
+        min: 0
+        max: 0
+      - name: REQ-P5 fault when precharge does not complete in 0.5 s
+        kind: at
+        signal: fault
+        t: 0.7
+        min: 1
+        max: 1
+      - name: REQ-P5 all contactors open on fault
+        kind: at
+        signal: k_precharge
+        t: 0.7
+        min: 0
+        max: 0
+      - name: REQ-P5 main never closes on a failed precharge
+        kind: at
+        signal: k_main
+        t: 1.4
+        min: 0
+        max: 0
+      - name: REQ-P6 fault latched while request stays on
+        kind: at
+        signal: fault
+        t: 1.4
+        min: 1
+        max: 1
+    - name: shutdown
+      type: closed_loop
+      plant: precharge
+      duration: 1.0
+      hv_request:
+        pulse:
+          t0: 0.1
+          t1: 0.6
+      checks:
+      - name: REQ-P7 main opens when request removed
+        kind: at
+        signal: k_main
+        t: 0.65
+        min: 0
+        max: 0
+      - name: REQ-P7 precharge open when off
+        kind: at
+        signal: k_precharge
+        t: 0.65
+        min: 0
+        max: 0
+    starter: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  }
+                ],
+                "transitions": []
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    reference: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "v_link_V >= 0.95 * v_pack_V",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Fault",
+                    "guard": "after(0.5, sec)",
+                    "priority": 3
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    mutants:
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "after(0.1, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Fault",
+                    "guard": "after(0.5, sec)",
+                    "priority": 3
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "v_link_V >= 0.95 * v_pack_V",
+                    "priority": 2
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "v_link_V >= 0.95 * v_pack_V",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Fault",
+                    "guard": "after(0.5, sec)",
+                    "priority": 3
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "v_link_V >= 0.5 * v_pack_V",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Fault",
+                    "guard": "after(0.5, sec)",
+                    "priority": 3
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "hv_contactors",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "hv_request",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "hv_request"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "v_pack_V",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "v_pack_V"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "v_link_V",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "v_link_V"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "sequencer",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "hv_request",
+                  "v_pack_V",
+                  "v_link_V"
+                ],
+                "outputs": [
+                  "k_precharge",
+                  "k_main",
+                  "fault"
+                ],
+                "initial": "Open",
+                "states": [
+                  {
+                    "name": "Open",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "Precharge",
+                    "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                  },
+                  {
+                    "name": "CloseMain",
+                    "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Closed",
+                    "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Open",
+                    "to": "Precharge",
+                    "guard": "hv_request == 1"
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Open",
+                    "guard": "hv_request == 0",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "CloseMain",
+                    "guard": "v_link_V >= 0.95 * v_pack_V",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Precharge",
+                    "to": "Fault",
+                    "guard": "after(0.5, sec)",
+                    "priority": 3
+                  },
+                  {
+                    "from": "CloseMain",
+                    "to": "Closed",
+                    "guard": "after(2, tick)"
+                  },
+                  {
+                    "from": "Closed",
+                    "to": "Open",
+                    "guard": "hv_request == 0"
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Open",
+                    "guard": "1 == 1"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "k_precharge",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "k_precharge"
+            },
+            "pos": [
+              460,
+              20
+            ]
+          },
+          {
+            "id": "k_main",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "k_main"
+            },
+            "pos": [
+              460,
+              80
+            ]
+          },
+          {
+            "id": "fault",
+            "type": "Outport",
+            "params": {
+              "port": 3,
+              "name": "fault"
+            },
+            "pos": [
+              460,
+              140
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "hv_request:1",
+            "dst": "sequencer:1"
+          },
+          {
+            "src": "v_pack_V:1",
+            "dst": "sequencer:2"
+          },
+          {
+            "src": "v_link_V:1",
+            "dst": "sequencer:3"
+          },
+          {
+            "src": "sequencer:1",
+            "dst": "k_precharge:1"
+          },
+          {
+            "src": "sequencer:2",
+            "dst": "k_main:1"
+          },
+          {
+            "src": "sequencer:3",
+            "dst": "fault:1"
+          }
+        ]
+      }
+  hints:
+  - 'States: Open, Precharge, (both closed briefly), Closed, Fault. Which guard leaves Precharge to close main?'
+  - The 100 Ω test fails any design that closes main after a fixed time.
+  solution: |
+    ```json
+    {
+      "format": "ecsim-model",
+      "version": 1,
+      "name": "hv_contactors",
+      "solver": {
+        "type": "FixedStepDiscrete",
+        "step": 0.01
+      },
+      "blocks": [
+        {
+          "id": "hv_request",
+          "type": "Inport",
+          "params": {
+            "port": 1,
+            "name": "hv_request"
+          },
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "v_pack_V",
+          "type": "Inport",
+          "params": {
+            "port": 2,
+            "name": "v_pack_V"
+          },
+          "pos": [
+            0,
+            80
+          ]
+        },
+        {
+          "id": "v_link_V",
+          "type": "Inport",
+          "params": {
+            "port": 3,
+            "name": "v_link_V"
+          },
+          "pos": [
+            0,
+            160
+          ]
+        },
+        {
+          "id": "sequencer",
+          "type": "Chart",
+          "params": {
+            "chart": {
+              "inputs": [
+                "hv_request",
+                "v_pack_V",
+                "v_link_V"
+              ],
+              "outputs": [
+                "k_precharge",
+                "k_main",
+                "fault"
+              ],
+              "initial": "Open",
+              "states": [
+                {
+                  "name": "Open",
+                  "entry": "k_precharge = 0; k_main = 0; fault = 0;"
+                },
+                {
+                  "name": "Precharge",
+                  "entry": "k_precharge = 1; k_main = 0; fault = 0;"
+                },
+                {
+                  "name": "CloseMain",
+                  "entry": "k_precharge = 1; k_main = 1; fault = 0;"
+                },
+                {
+                  "name": "Closed",
+                  "entry": "k_precharge = 0; k_main = 1; fault = 0;"
+                },
+                {
+                  "name": "Fault",
+                  "entry": "k_precharge = 0; k_main = 0; fault = 1;"
+                }
+              ],
+              "transitions": [
+                {
+                  "from": "Open",
+                  "to": "Precharge",
+                  "guard": "hv_request == 1"
+                },
+                {
+                  "from": "Precharge",
+                  "to": "Open",
+                  "guard": "hv_request == 0",
+                  "priority": 1
+                },
+                {
+                  "from": "Precharge",
+                  "to": "CloseMain",
+                  "guard": "v_link_V >= 0.95 * v_pack_V",
+                  "priority": 2
+                },
+                {
+                  "from": "Precharge",
+                  "to": "Fault",
+                  "guard": "after(0.5, sec)",
+                  "priority": 3
+                },
+                {
+                  "from": "CloseMain",
+                  "to": "Closed",
+                  "guard": "after(2, tick)"
+                },
+                {
+                  "from": "Closed",
+                  "to": "Open",
+                  "guard": "hv_request == 0"
+                },
+                {
+                  "from": "Fault",
+                  "to": "Open",
+                  "guard": "hv_request == 0"
+                }
+              ]
+            }
+          },
+          "pos": [
+            220,
+            60
+          ]
+        },
+        {
+          "id": "k_precharge",
+          "type": "Outport",
+          "params": {
+            "port": 1,
+            "name": "k_precharge"
+          },
+          "pos": [
+            460,
+            20
+          ]
+        },
+        {
+          "id": "k_main",
+          "type": "Outport",
+          "params": {
+            "port": 2,
+            "name": "k_main"
+          },
+          "pos": [
+            460,
+            80
+          ]
+        },
+        {
+          "id": "fault",
+          "type": "Outport",
+          "params": {
+            "port": 3,
+            "name": "fault"
+          },
+          "pos": [
+            460,
+            140
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "src": "hv_request:1",
+          "dst": "sequencer:1"
+        },
+        {
+          "src": "v_pack_V:1",
+          "dst": "sequencer:2"
+        },
+        {
+          "src": "v_link_V:1",
+          "dst": "sequencer:3"
+        },
+        {
+          "src": "sequencer:1",
+          "dst": "k_precharge:1"
+        },
+        {
+          "src": "sequencer:2",
+          "dst": "k_main:1"
+        },
+        {
+          "src": "sequencer:3",
+          "dst": "fault:1"
+        }
+      ]
+    }
+    ```
