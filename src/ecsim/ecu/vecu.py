@@ -18,6 +18,8 @@ Execution model (documented so learners know exactly what is and isn't simulated
 from __future__ import annotations
 
 import ctypes
+import itertools
+import os
 import random
 import shutil
 import sys
@@ -30,6 +32,7 @@ from ecsim.ecu.profiles import TargetProfile
 
 HANG_US = 10**12
 RESET_POWER_ON, RESET_WATCHDOG, RESET_SOFTWARE = 0, 1, 2
+_COPY_IDS = itertools.count(1)  # unique file per load: Windows locks loaded DLLs
 RESET_NAMES = {RESET_POWER_ON: "power-on", RESET_WATCHDOG: "watchdog", RESET_SOFTWARE: "software"}
 
 
@@ -131,9 +134,11 @@ class VirtualEcu:
     # ---- library lifecycle ----------------------------------------------
     def _load(self) -> None:
         self._generation += 1
-        copy = self.lib_path.with_name(f"{self.lib_path.stem}_g{self._generation}{self.lib_path.suffix}")
+        copy = self.lib_path.with_name(
+            f"{self.lib_path.stem}_{os.getpid()}_{next(_COPY_IDS)}{self.lib_path.suffix}")
         shutil.copyfile(self.lib_path, copy)
         lib = ctypes.CDLL(str(copy))
+        self._lib_copy = copy
         lib.ecu_io_size.restype = ctypes.c_uint32
         if lib.ecu_io_size() != ctypes.sizeof(EcuIo):
             raise RuntimeError("HAL ABI mismatch between hal.c and io.py")
@@ -160,6 +165,10 @@ class VirtualEcu:
             self._app_init = None
             _unload(self._lib)
             self._lib = None
+            try:
+                self._lib_copy.unlink()
+            except OSError:
+                pass  # best effort; the temporary directory is removed later anyway
 
     def __enter__(self) -> "VirtualEcu":
         return self

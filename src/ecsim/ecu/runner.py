@@ -35,14 +35,25 @@ def run_isolated(lib: Path, profile: str, scenario: str, seed: int = 1, timeout_
     for line in p.stdout.splitlines():
         if line.startswith(MARK):
             return RunOutcome(True, ScenarioResult.from_dict(json.loads(line[len(MARK):])))
-    if p.returncode < 0 or p.returncode > 128 or p.returncode in (3221225477,):
+    if p.returncode < 0 or p.returncode > 128:   # signal (POSIX) or NTSTATUS e.g. 0xC0000005 (Windows)
         return RunOutcome(False, None, f"The application crashed (exit code {p.returncode}; e.g. segmentation "
                                        "fault from an invalid pointer or out-of-bounds array access).\n"
                                        + p.stderr[-2000:])
     return RunOutcome(False, None, f"Simulation failed (exit code {p.returncode}).\n" + p.stderr[-3000:])
 
 
+def _harden_child() -> None:
+    """Make a crash in learner code end the process promptly with a diagnostic."""
+    import faulthandler
+    faulthandler.enable()
+    if sys.platform.startswith("win"):
+        import ctypes
+        # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX: no "has stopped working" dialog
+        ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _harden_child()
     a = argv if argv is not None else sys.argv[1:]
     lib, profile, scenario = Path(a[0]), a[1], a[2]
     seed = int(a[3]) if len(a) > 3 else 1

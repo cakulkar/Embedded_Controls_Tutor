@@ -232,7 +232,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _utf8_stdout() -> None:
+    """Windows consoles/pipes may default to cp1252, which cannot print ±, ≥, µ, ✓."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass  # replaced stream (e.g. pytest capture) - already Unicode-capable
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_stdout()
     args = build_parser().parse_args(argv)
     ctx = bootstrap(args.home)
     try:
