@@ -23,11 +23,6 @@ PLANNED = {
                                         "Radar/camera abstractions; lock-step with the virtual ECU"]),
     "CAN Network Analyzer": (8, ["Trace view, DBC decode/encode (cantools), logging & replay",
                                  "J1939, ISOBUS concepts, UDS, bus-off & timeout fault handling"]),
-    "Requirements Manager": (7, ["Customer → system → functional → software requirements",
-                                 "Acceptance criteria, reviews, change requests, ReqIF import/export",
-                                 "Traceability matrix to implementation and tests"]),
-    "Testing & Validation Center": (7, ["MIL / SIL / PIL(approx.) / software-HIL orchestration",
-                                        "Unit/integration/regression, coverage, defect tracking, reports"]),
     "Calibration Studio": (14, ["Parameter identification, LUT/breakpoint design, A2L & XCP concepts",
                                 "Calibration datasets and change management"]),
     "AI Engineering Mentor": (15, ["Local LLM only, retrieval over local docs with citations",
@@ -67,6 +62,13 @@ class MainWindow(QMainWindow):
                 w = AcademyScreen(ctx, learner_id, on_change=self.refresh_all)
             elif name == "Control Model Studio":
                 w = ModelStudioScreen(ctx, learner_id)
+            elif name == "Requirements Manager":
+                from ecsim.gui.screens.verification import RequirementsScreen
+                w = RequirementsScreen(ctx, learner_id)
+            elif name == "Testing & Validation Center":
+                from ecsim.gui.screens.verification import TestingCenterScreen
+                w = TestingCenterScreen(ctx, learner_id, studio_model=lambda: self.screens["Control Model Studio"]._commit_to_root().model
+                                        if self.screens["Control Model Studio"].doc.model["blocks"] else None)
             elif name == "Virtual ECU Lab":
                 w = EcuLabScreen(ctx, learner_id)
             elif name == "Competency & Certification":

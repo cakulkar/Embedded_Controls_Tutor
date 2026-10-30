@@ -767,6 +767,9 @@ class ModelStudioScreen(QWidget):
                  f"  inports {c.inport_names}  outports {c.outport_names}",
                  "  execution order: " + " → ".join(c.order)]
         lines += [f"  warning: {w}" for w in c.warnings]
+        from ecsim.model.guidelines import check_model
+        findings = [f for f in check_model(doc.model) if f.rule not in ("ECS-SIG-01", "ECS-RT-01")]
+        lines += ["", f"Modelling guidelines: {len(findings)} finding(s)"] + [f"  {f}" for f in findings]
         self.messages.setPlainText("\n".join(lines))
         self.tabs.setCurrentIndex(0)
         return True
