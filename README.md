@@ -105,3 +105,7 @@ graded by MIL tests on the ECSim engine or Simulink). A `c_function` exercise ne
 ## Documentation
 `docs/ARCHITECTURE.md` (§7a: virtual ECU) · `docs/CURRICULUM.md` · `docs/TOOL_SUBSTITUTES.md` ·
 `docs/ROADMAP.md` · `docs/PROGRESS.md`
+
+## License
+
+Proprietary. See `LICENSE` (EULA) and `THIRD_PARTY_NOTICES.md`. Not affiliated with MathWorks, Infineon or AUTOSAR.

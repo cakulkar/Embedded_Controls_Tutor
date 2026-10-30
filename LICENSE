@@ -1,21 +1,58 @@
-MIT License
+ECSim — Embedded Controls Engineer Job Simulator
+END USER LICENSE AGREEMENT (EULA)
 
-Copyright (c) 2026 cakulkar
+Copyright (c) 2026 cakulkar ("Licensor"). All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software, including its source code, object code, training content, exercises,
+reference solutions, models, documentation and associated files (the "Software"), is
+proprietary to the Licensor and is licensed, not sold.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. LICENSE GRANT. Subject to payment of the applicable fee and compliance with this
+   Agreement, the Licensor grants you a personal, non-exclusive, non-transferable,
+   non-sublicensable license to install and use one copy of the Software for your own
+   training and evaluation purposes on devices you own or control.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. RESTRICTIONS. You may not, except as expressly permitted by applicable law notwithstanding
+   this limitation: (a) copy, distribute, sell, rent, lease, lend, sublicense or otherwise
+   make the Software available to any third party; (b) publish or share exercise reference
+   solutions, graders, tests or content; (c) modify, adapt, translate or create derivative
+   works of the Software; (d) reverse engineer, decompile or disassemble the Software;
+   (e) remove or alter any proprietary notices; (f) use the Software to build a competing
+   product or service.
+
+3. THIRD-PARTY COMPONENTS. The Software uses third-party components licensed under their
+   own terms (see THIRD_PARTY_NOTICES.md). Nothing in this Agreement limits your rights
+   under those licenses with respect to those components.
+
+4. NO CERTIFICATION OR EMPLOYMENT GUARANTEE. Completing training in the Software does not
+   constitute professional certification, accreditation, or compliance with any standard
+   (including ISO 26262, ISO 25119, ISO 19014 or ISO/SAE 21434), and does not guarantee
+   employment. Simulated environments are not equivalent to production tools or hardware.
+
+5. THIRD-PARTY TRADEMARKS. MATLAB, Simulink, Stateflow and Embedded Coder are trademarks
+   of The MathWorks, Inc. AURIX and TriCore are trademarks of Infineon Technologies AG.
+   AUTOSAR is a trademark of the AUTOSAR partnership. Other names may be trademarks of
+   their respective owners. The Software is not affiliated with or endorsed by them.
+   Use of MATLAB/Simulink with the Software requires your own valid license from MathWorks.
+
+6. OWNERSHIP. The Licensor retains all right, title and interest in the Software. All
+   rights not expressly granted are reserved.
+
+7. TERMINATION. This license terminates automatically if you breach it. On termination you
+   must stop using and destroy all copies of the Software.
+
+8. DISCLAIMER OF WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NON-INFRINGEMENT. THE SOFTWARE IS A TRAINING TOOL AND MUST NOT BE USED TO DEVELOP,
+   VALIDATE OR RELEASE SAFETY-RELEVANT PRODUCTION SOFTWARE.
+
+9. LIMITATION OF LIABILITY. TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT
+   BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR
+   FOR ANY DAMAGES EXCEEDING THE AMOUNT YOU PAID FOR THE SOFTWARE.
+
+10. GOVERNING LAW. This Agreement is governed by the laws of the State of Michigan, USA,
+    without regard to conflict-of-laws principles.
+
+NOTE TO LICENSOR: this template should be reviewed by a qualified attorney before sale.
+Versions of this repository published before this license change were made available
+under the MIT License; that grant cannot be revoked for copies obtained at that time.

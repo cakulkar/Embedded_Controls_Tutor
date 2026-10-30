@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Embedded Controls Engineer Job Simulator - offline engineering training platform"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Proprietary - see LICENSE" }
 dependencies = [
     "PyYAML>=6.0",
     "PySide6>=6.6",
