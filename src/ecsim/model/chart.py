@@ -232,16 +232,18 @@ class Chart:
     def init_state(self) -> dict:
         env = {n: 0.0 for n in self.inputs + self.outputs}
         env.update(self.locals)
-        return {"env": env, "active": [], "ticks": {}, "started": False}
+        return {"env": env, "active": [], "ticks": {}, "started": False, "entered": [], "fired": None}
 
     def _enter(self, st: dict, chain: list[str], ts: float) -> None:
         for s in chain:
             st["active"].append(s)
             st["ticks"][s] = 0
+            st.setdefault("entered", []).append(s)
             run_actions(self.actions[s]["entry"], st["env"], (0, ts))
 
     def step(self, st: dict, inputs: list[float], ts: float) -> list[float]:
         env = st["env"]
+        st["entered"], st["fired"] = [], None          # per-step record (coverage)
         for n, v in zip(self.inputs, inputs):
             env[n] = float(v)
         if not st["started"]:
@@ -254,6 +256,7 @@ class Chart:
             for depth, src in enumerate(list(st["active"])):
                 for to, guard, action in self.trans[src]:
                     if eval_expr(guard, env, (st["ticks"][src], ts)):
+                        st["fired"] = (src, to, self.trans[src].index((to, guard, action)))
                         self._fire(st, depth, src, to, action, ts)
                         fired = True
                         break

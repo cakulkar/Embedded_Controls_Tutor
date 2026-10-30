@@ -231,3 +231,29 @@ def test_code_tab_generate_b2b_deploy(studio, tmp_path):
     assert studio.run_b2b() and "EQUIVALENT" in studio.code_view.toPlainText()
     studio.code_dtype.setCurrentText("single")
     assert studio.deploy() and "motor_load_step" in studio.code_view.toPlainText()
+
+
+def test_testing_center_and_requirements(win, ctx, tmp_path):
+    studio = win.screens["Control Model Studio"]
+    build_pi(studio)
+    req = win.show_screen("Requirements Manager")
+    req.ex.setCurrentIndex(req.ex.findData("B02-E4"))
+    assert req.import_exercise() == 8 and req.table.rowCount() == 8
+    req.f_id.setText("SYS-SPEED"); req.f_title.setText("Hold commanded speed"); req.f_level.setCurrentText("system")
+    assert req.save() and req.table.rowCount() == 9
+    req.f_id.setText("REQ-1"); req.f_title.setText("speed"); req.f_parent.setText("SYS-SPEED")
+    assert req.save()
+    req.f_parent.setText("NOPE")
+    assert not req.save() and "does not exist" in req.msg.text()
+    path = req.export_reqif(str(tmp_path / "r.reqif"))
+    tc = win.show_screen("Testing & Validation Center")
+    tc.tests.setCurrentIndex(tc.tests.findData("B02-E4"))
+    assert tc.run()
+    assert "Checks 8/8" in tc.summary.text() and "requirements traced 8/9" in tc.summary.text()
+    assert tc.coverage.rowCount() > 0 and tc.trace.rowCount() == 9
+    out = tc.export_report(str(tmp_path / "rep.html"))
+    text = open(out, encoding="utf-8").read()
+    assert "All checks passed" in text and "REQ-4" in text and "coverage (decision)" in text
+    req.f_id.setText("SYS-SPEED")
+    assert not req.delete()                                    # has a child
+    assert req.import_reqif(path)

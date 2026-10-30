@@ -1,0 +1,2334 @@
+# Generated from verified models and test suites; edit freely, then run pytest.
+id: B05
+department: B
+title: Modelling guidelines, requirements-based testing and coverage
+ordinal: 5
+version: '1'
+lessons:
+- id: B05-L1
+  title: Modelling guidelines and model reviews
+  body: |
+    # Why guidelines exist
+
+    Every MBD organisation has a style guide. The MathWorks Advisory Board (MAB) and JMAAB guidelines are
+    the best-known public starting points, and projects tailor them. They make models **readable in
+    reviews, safe to generate code from, and consistent across a team**.
+
+    ECSim checks its own rule set (Studio → *Check model*, or the Testing & Validation Center). Each rule
+    targets a concern those guideline families share:
+
+    | ECSim rule | Concern |
+    |---|---|
+    | ECS-NAM-01/02 | meaningful names; interface signals with units |
+    | ECS-RT-01 | explicit rate transitions |
+    | ECS-DIV-01 | protected division |
+    | ECS-INT-01 | integrators limited to a physical range |
+    | ECS-REL-01 | no floating-point equality |
+    | ECS-CHT-01/02/03 | complete, reachable state machines |
+    | ECS-CPX-01 | manageable complexity per level |
+
+    A finding is a question, not a verdict. In a review you either fix it or write down why the
+    deviation is acceptable. Being able to justify a deviation is a core skill.
+- id: B05-L2
+  title: Requirements-based testing, coverage and traceability
+  body: |
+    # Three questions every verification engineer answers
+
+    1. **Does every requirement have tests?** (traceability: requirement → test)
+    2. **Do the tests exercise the whole design?** (structural coverage)
+    3. **Would the tests catch a defect?** (fault detection, e.g. by mutation/fault injection)
+
+    ### Coverage
+    * **Decision coverage**: every decision outcome (both branches of a switch, both results of a
+      comparison, every state and transition of a chart) is exercised at least once.
+    * **Condition coverage**: every atomic condition inside a decision takes both values.
+    * **MC/DC**: each condition is shown to *independently* affect the decision's outcome. For an AND of
+      *n* conditions this needs at least *n + 1* test cases.
+
+    ISO 26262-6 recommends structural coverage metrics for software unit testing, with stronger metrics
+    (up to MC/DC) for higher ASILs. Consult the standard for the exact tables.
+
+    ### Coverage is necessary, not sufficient
+    100% coverage only shows that the tests *visited* everything. It does not show that they *checked*
+    the right values. A test suite with full coverage can still miss an off-by-100 rpm threshold, unless
+    some test probes the boundary. That is exactly the trap in B05-E4.
+
+    ### Traceability
+    Name checks after requirement IDs (`REQ-M3 …`). The Requirements Manager links requirements to
+    tests, and the Testing & Validation Center builds the traceability matrix from your results.
+exercises:
+- id: B05-E1
+  kind: numeric
+  title: MC/DC for a 3-input AND
+  competency: TST
+  level: intermediate
+  points: 10
+  prompt: |
+    What is the minimum number of test cases for MC/DC of the decision `a && b && c`?
+  spec:
+    answer: 4
+    abs_tol: 0
+    integer: true
+  hints:
+  - One case where the decision is true, plus one per condition that alone flips it to false.
+  solution: |
+    **4** (n + 1): TTT, plus FTT, TFT and TTF, each showing one condition independently changes the outcome.
+- id: B05-E2
+  kind: choice
+  title: Coverage vs fault detection
+  competency: TST
+  level: intermediate
+  points: 10
+  prompt: |
+    Your tests reach 100% decision coverage, yet a seeded defect (RUN threshold changed from 500 to 400 rpm) survives. Why?
+  spec:
+    options:
+    - Decision coverage tool error.
+    - No test applies a speed between 400 and 500 rpm and checks the mode. Coverage visits outcomes but does not probe boundaries.
+    - MC/DC would always catch it.
+    - The defect is not observable at the outputs.
+    correct:
+    - 1
+  hints:
+  - Which input value distinguishes the correct model from the defective one?
+  solution: |
+    **Boundary not tested.** Coverage only requires *some* speed above and below the threshold. Requirements-based boundary-value tests (499 / 500 rpm) are what catch it.
+- id: B05-E3
+  kind: choice
+  title: A guideline finding in review
+  competency: MBD
+  level: intermediate
+  points: 10
+  prompt: |
+    The guideline check reports ECS-INT-01 (integrator without limits) on a coulomb counter. What is the right response?
+  spec:
+    options:
+    - Always add limits; every finding must be fixed.
+    - Ignore it; guidelines are optional.
+    - 'Decide: limit it to the physically meaningful range (e.g. 0…pack capacity) or document why it cannot wind up in this use, and record the decision in the review.'
+    - Disable the rule globally.
+    correct:
+    - 2
+  hints:
+  - What would a reviewer need to see either way?
+  solution: |
+    **Decide and record.** A finding is a question. Fix it, or justify the deviation in writing. Silent fixes and silent ignores are both review failures.
+- id: B05-E4
+  kind: test_design
+  title: 'Write the tests: motor mode manager'
+  competency: TST
+  level: advanced
+  points: 40
+  practical: true
+  max_independent_hints: 1
+  prompt: |
+    You are the **test engineer** for the motor mode manager (the B03 chart; requirements REQ-M1…M6 in B03-E4).
+    Write MIL test vectors that
+
+    1. **pass on the correct model** (the model is shown below; build tests from the *requirements*),
+    2. reach **100% decision coverage** (every state entered, every transition taken),
+    3. **detect all 6 seeded faults** (hidden variants of the model, each violating one requirement subtly).
+
+    Submit JSON `{"tests": [...]}`. Each test needs `name`, `duration` (≤ 60 s), `inputs` for `enable_cmd`, `speed_rpm` and `overtemp`
+    (signals: `const`, `step`, `pulse`, `ramp`, `points`), and `checks` on `mode` / `pwm_allowed` (`at`, `near`, `within`, `below_by`).
+    The starter shows one complete test.
+
+    Model under test:
+
+    ```json
+    {
+      "format": "ecsim-model",
+      "version": 1,
+      "name": "mode_mgr",
+      "solver": {
+        "type": "FixedStepDiscrete",
+        "step": 0.01
+      },
+      "blocks": [
+        {
+          "id": "enable_cmd",
+          "type": "Inport",
+          "params": {
+            "port": 1,
+            "name": "enable_cmd"
+          },
+          "pos": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "speed_rpm",
+          "type": "Inport",
+          "params": {
+            "port": 2,
+            "name": "speed_rpm"
+          },
+          "pos": [
+            0,
+            80
+          ]
+        },
+        {
+          "id": "overtemp",
+          "type": "Inport",
+          "params": {
+            "port": 3,
+            "name": "overtemp"
+          },
+          "pos": [
+            0,
+            160
+          ]
+        },
+        {
+          "id": "mode_logic",
+          "type": "Chart",
+          "params": {
+            "chart": {
+              "inputs": [
+                "enable_cmd",
+                "speed_rpm",
+                "overtemp"
+              ],
+              "outputs": [
+                "mode",
+                "pwm_allowed"
+              ],
+              "initial": "Off",
+              "states": [
+                {
+                  "name": "Off",
+                  "entry": "mode = 0; pwm_allowed = 0;"
+                },
+                {
+                  "name": "Active",
+                  "initial": "Starting"
+                },
+                {
+                  "name": "Starting",
+                  "parent": "Active",
+                  "entry": "mode = 1; pwm_allowed = 1;"
+                },
+                {
+                  "name": "Running",
+                  "parent": "Active",
+                  "entry": "mode = 2; pwm_allowed = 1;"
+                },
+                {
+                  "name": "Fault",
+                  "entry": "mode = 3; pwm_allowed = 0;"
+                }
+              ],
+              "transitions": [
+                {
+                  "from": "Off",
+                  "to": "Active",
+                  "guard": "enable_cmd == 1"
+                },
+                {
+                  "from": "Active",
+                  "to": "Fault",
+                  "guard": "overtemp == 1",
+                  "priority": 1
+                },
+                {
+                  "from": "Active",
+                  "to": "Off",
+                  "guard": "enable_cmd == 0",
+                  "priority": 2
+                },
+                {
+                  "from": "Starting",
+                  "to": "Running",
+                  "guard": "speed_rpm >= 500",
+                  "priority": 1
+                },
+                {
+                  "from": "Starting",
+                  "to": "Fault",
+                  "guard": "after(2, sec)",
+                  "priority": 2
+                },
+                {
+                  "from": "Fault",
+                  "to": "Off",
+                  "guard": "enable_cmd == 0"
+                }
+              ]
+            }
+          },
+          "pos": [
+            220,
+            60
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "Outport",
+          "params": {
+            "port": 1,
+            "name": "mode"
+          },
+          "pos": [
+            440,
+            40
+          ]
+        },
+        {
+          "id": "pwm_allowed",
+          "type": "Outport",
+          "params": {
+            "port": 2,
+            "name": "pwm_allowed"
+          },
+          "pos": [
+            440,
+            120
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "src": "enable_cmd:1",
+          "dst": "mode_logic:1"
+        },
+        {
+          "src": "speed_rpm:1",
+          "dst": "mode_logic:2"
+        },
+        {
+          "src": "overtemp:1",
+          "dst": "mode_logic:3"
+        },
+        {
+          "src": "mode_logic:1",
+          "dst": "mode:1"
+        },
+        {
+          "src": "mode_logic:2",
+          "dst": "pwm_allowed:1"
+        }
+      ]
+    }
+    ```
+  spec:
+    model: |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    interface:
+      inports:
+      - enable_cmd
+      - speed_rpm
+      - overtemp
+      outports:
+      - mode
+      - pwm_allowed
+      step: 0.01
+    min_coverage: 1.0
+    mutants:
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2.5, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 400",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Running",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "overtemp == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 1;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    - |
+      {
+        "format": "ecsim-model",
+        "version": 1,
+        "name": "mode_mgr",
+        "solver": {
+          "type": "FixedStepDiscrete",
+          "step": 0.01
+        },
+        "blocks": [
+          {
+            "id": "enable_cmd",
+            "type": "Inport",
+            "params": {
+              "port": 1,
+              "name": "enable_cmd"
+            },
+            "pos": [
+              0,
+              0
+            ]
+          },
+          {
+            "id": "speed_rpm",
+            "type": "Inport",
+            "params": {
+              "port": 2,
+              "name": "speed_rpm"
+            },
+            "pos": [
+              0,
+              80
+            ]
+          },
+          {
+            "id": "overtemp",
+            "type": "Inport",
+            "params": {
+              "port": 3,
+              "name": "overtemp"
+            },
+            "pos": [
+              0,
+              160
+            ]
+          },
+          {
+            "id": "mode_logic",
+            "type": "Chart",
+            "params": {
+              "chart": {
+                "inputs": [
+                  "enable_cmd",
+                  "speed_rpm",
+                  "overtemp"
+                ],
+                "outputs": [
+                  "mode",
+                  "pwm_allowed"
+                ],
+                "initial": "Off",
+                "states": [
+                  {
+                    "name": "Off",
+                    "entry": "mode = 0; pwm_allowed = 0;"
+                  },
+                  {
+                    "name": "Active",
+                    "initial": "Starting"
+                  },
+                  {
+                    "name": "Starting",
+                    "parent": "Active",
+                    "entry": "mode = 1; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Running",
+                    "parent": "Active",
+                    "entry": "mode = 2; pwm_allowed = 1;"
+                  },
+                  {
+                    "name": "Fault",
+                    "entry": "mode = 3; pwm_allowed = 0;"
+                  }
+                ],
+                "transitions": [
+                  {
+                    "from": "Off",
+                    "to": "Active",
+                    "guard": "enable_cmd == 1"
+                  },
+                  {
+                    "from": "Active",
+                    "to": "Fault",
+                    "guard": "overtemp == 1",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Running",
+                    "guard": "speed_rpm >= 500",
+                    "priority": 1
+                  },
+                  {
+                    "from": "Starting",
+                    "to": "Fault",
+                    "guard": "after(2, sec)",
+                    "priority": 2
+                  },
+                  {
+                    "from": "Fault",
+                    "to": "Off",
+                    "guard": "enable_cmd == 0"
+                  }
+                ]
+              }
+            },
+            "pos": [
+              220,
+              60
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "Outport",
+            "params": {
+              "port": 1,
+              "name": "mode"
+            },
+            "pos": [
+              440,
+              40
+            ]
+          },
+          {
+            "id": "pwm_allowed",
+            "type": "Outport",
+            "params": {
+              "port": 2,
+              "name": "pwm_allowed"
+            },
+            "pos": [
+              440,
+              120
+            ]
+          }
+        ],
+        "lines": [
+          {
+            "src": "enable_cmd:1",
+            "dst": "mode_logic:1"
+          },
+          {
+            "src": "speed_rpm:1",
+            "dst": "mode_logic:2"
+          },
+          {
+            "src": "overtemp:1",
+            "dst": "mode_logic:3"
+          },
+          {
+            "src": "mode_logic:1",
+            "dst": "mode:1"
+          },
+          {
+            "src": "mode_logic:2",
+            "dst": "pwm_allowed:1"
+          }
+        ]
+      }
+    starter: |
+      {
+        "tests": [
+          {
+            "name": "my first test",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "const": 0
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "OFF before enable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.05,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          }
+        ]
+      }
+    reference: |
+      {
+        "tests": [
+          {
+            "name": "start and run",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "step": {
+                  "t": 0.3,
+                  "before": 0,
+                  "after": 600
+                }
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "OFF before enable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.05,
+                "min": 0,
+                "max": 0
+              },
+              {
+                "name": "STARTING",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.2,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "PWM while starting",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 0.2,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "RUN above 500 rpm",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.5,
+                "min": 2,
+                "max": 2
+              }
+            ]
+          },
+          {
+            "name": "threshold boundary",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "const": 499
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "499 rpm is not RUN",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.9,
+                "min": 1,
+                "max": 1
+              }
+            ]
+          },
+          {
+            "name": "start timeout",
+            "duration": 2.5,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "const": 0
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "still starting at 1.95 s",
+                "kind": "at",
+                "signal": "mode",
+                "t": 2.05,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "FAULT just after 2 s",
+                "kind": "at",
+                "signal": "mode",
+                "t": 2.15,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "no PWM in FAULT",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 2.15,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          },
+          {
+            "name": "overtemp while starting, latch, reset",
+            "duration": 1.5,
+            "inputs": {
+              "enable_cmd": {
+                "pulse": {
+                  "t0": 0.1,
+                  "t1": 1.0
+                }
+              },
+              "speed_rpm": {
+                "const": 0
+              },
+              "overtemp": {
+                "pulse": {
+                  "t0": 0.3,
+                  "t1": 0.4
+                }
+              }
+            },
+            "checks": [
+              {
+                "name": "FAULT from STARTING",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.35,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "latched after cause clears",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.8,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "OFF after disable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 1.2,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          },
+          {
+            "name": "disable while running",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "pulse": {
+                  "t0": 0.1,
+                  "t1": 0.6
+                }
+              },
+              "speed_rpm": {
+                "const": 800
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "RUN",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.5,
+                "min": 2,
+                "max": 2
+              },
+              {
+                "name": "OFF after disable in RUN",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.7,
+                "min": 0,
+                "max": 0
+              },
+              {
+                "name": "no PWM when OFF",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 0.7,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          }
+        ]
+      }
+    weak_suites:
+    - |
+      {
+        "tests": [
+          {
+            "name": "T1 normal start",
+            "type": "open_loop",
+            "duration": 1.5,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "ramp": {
+                  "t0": 0.1,
+                  "slope": 1000
+                }
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M6 OFF before enable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.05,
+                "min": 0,
+                "max": 0
+              },
+              {
+                "name": "REQ-M1 STARTING after enable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.15,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "REQ-M1 PWM allowed while starting",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 0.15,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "REQ-M2 RUN at \u2265 500 rpm",
+                "kind": "at",
+                "signal": "mode",
+                "t": 1.0,
+                "min": 2,
+                "max": 2
+              }
+            ]
+          },
+          {
+            "name": "T2 start timeout",
+            "type": "open_loop",
+            "duration": 3.0,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "const": 0
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M3 still STARTING before 2 s",
+                "kind": "at",
+                "signal": "mode",
+                "t": 2.05,
+                "min": 1,
+                "max": 1
+              },
+              {
+                "name": "REQ-M3 FAULT after 2 s without speed",
+                "kind": "at",
+                "signal": "mode",
+                "t": 2.2,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "REQ-M3 PWM blocked in FAULT",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 2.2,
+                "min": 0,
+                "max": 0
+              },
+              {
+                "name": "REQ-M5 FAULT latched",
+                "kind": "at",
+                "signal": "mode",
+                "t": 2.9,
+                "min": 3,
+                "max": 3
+              }
+            ]
+          },
+          {
+            "name": "T3 over-temperature latch",
+            "type": "open_loop",
+            "duration": 1.6,
+            "inputs": {
+              "enable_cmd": {
+                "pulse": {
+                  "t0": 0.1,
+                  "t1": 1.2
+                }
+              },
+              "speed_rpm": {
+                "const": 1000
+              },
+              "overtemp": {
+                "pulse": {
+                  "t0": 0.5,
+                  "t1": 0.6
+                }
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M2 RUN before the fault",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.4,
+                "min": 2,
+                "max": 2
+              },
+              {
+                "name": "REQ-M4 FAULT on over-temperature",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.55,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "REQ-M5 FAULT stays latched after the cause clears",
+                "kind": "at",
+                "signal": "mode",
+                "t": 1.0,
+                "min": 3,
+                "max": 3
+              },
+              {
+                "name": "REQ-M5 OFF once enable is removed",
+                "kind": "at",
+                "signal": "mode",
+                "t": 1.3,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          },
+          {
+            "name": "T4 simultaneous events",
+            "type": "open_loop",
+            "duration": 0.6,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "step": {
+                  "t": 0.3,
+                  "before": 0,
+                  "after": 1000
+                }
+              },
+              "overtemp": {
+                "step": {
+                  "t": 0.3,
+                  "before": 0,
+                  "after": 1
+                }
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M4 safety transition wins over RUN in the same step",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.3,
+                "min": 3,
+                "max": 3
+              }
+            ]
+          },
+          {
+            "name": "T6 over-temperature while starting",
+            "type": "open_loop",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "step": {
+                  "t": 0.1,
+                  "before": 0,
+                  "after": 1
+                }
+              },
+              "speed_rpm": {
+                "const": 0
+              },
+              "overtemp": {
+                "pulse": {
+                  "t0": 0.5,
+                  "t1": 0.6
+                }
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M4 FAULT on over-temperature in every active mode",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.55,
+                "min": 3,
+                "max": 3
+              }
+            ]
+          },
+          {
+            "name": "T5 disable",
+            "type": "open_loop",
+            "duration": 1.0,
+            "inputs": {
+              "enable_cmd": {
+                "pulse": {
+                  "t0": 0.1,
+                  "t1": 0.8
+                }
+              },
+              "speed_rpm": {
+                "const": 1000
+              },
+              "overtemp": {
+                "const": 0
+              }
+            },
+            "checks": [
+              {
+                "name": "REQ-M6 OFF after disable",
+                "kind": "at",
+                "signal": "mode",
+                "t": 0.85,
+                "min": 0,
+                "max": 0
+              },
+              {
+                "name": "REQ-M6 PWM blocked when OFF",
+                "kind": "at",
+                "signal": "pwm_allowed",
+                "t": 0.85,
+                "min": 0,
+                "max": 0
+              }
+            ]
+          }
+        ]
+      }
+  hints:
+  - For every requirement with a number in it (500 rpm, 2 s), test just below and just above the number.
+  - Check every output in every mode, including the ones that should stay 0.
+  solution: |
+    A suite that passes: start/run, the 499 rpm boundary, timeout probed at 1.95 s and 2.05 s after entry, over-temperature while STARTING (not only RUN), latch then reset, and disable while RUN.
+
+    ```json
+    {
+      "tests": [
+        {
+          "name": "start and run",
+          "duration": 1.0,
+          "inputs": {
+            "enable_cmd": {
+              "step": {
+                "t": 0.1,
+                "before": 0,
+                "after": 1
+              }
+            },
+            "speed_rpm": {
+              "step": {
+                "t": 0.3,
+                "before": 0,
+                "after": 600
+              }
+            },
+            "overtemp": {
+              "const": 0
+            }
+          },
+          "checks": [
+            {
+              "name": "OFF before enable",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.05,
+              "min": 0,
+              "max": 0
+            },
+            {
+              "name": "STARTING",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.2,
+              "min": 1,
+              "max": 1
+            },
+            {
+              "name": "PWM while starting",
+              "kind": "at",
+              "signal": "pwm_allowed",
+              "t": 0.2,
+              "min": 1,
+              "max": 1
+            },
+            {
+              "name": "RUN above 500 rpm",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.5,
+              "min": 2,
+              "max": 2
+            }
+          ]
+        },
+        {
+          "name": "threshold boundary",
+          "duration": 1.0,
+          "inputs": {
+            "enable_cmd": {
+              "step": {
+                "t": 0.1,
+                "before": 0,
+                "after": 1
+              }
+            },
+            "speed_rpm": {
+              "const": 499
+            },
+            "overtemp": {
+              "const": 0
+            }
+          },
+          "checks": [
+            {
+              "name": "499 rpm is not RUN",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.9,
+              "min": 1,
+              "max": 1
+            }
+          ]
+        },
+        {
+          "name": "start timeout",
+          "duration": 2.5,
+          "inputs": {
+            "enable_cmd": {
+              "step": {
+                "t": 0.1,
+                "before": 0,
+                "after": 1
+              }
+            },
+            "speed_rpm": {
+              "const": 0
+            },
+            "overtemp": {
+              "const": 0
+            }
+          },
+          "checks": [
+            {
+              "name": "still starting at 1.95 s",
+              "kind": "at",
+              "signal": "mode",
+              "t": 2.05,
+              "min": 1,
+              "max": 1
+            },
+            {
+              "name": "FAULT just after 2 s",
+              "kind": "at",
+              "signal": "mode",
+              "t": 2.15,
+              "min": 3,
+              "max": 3
+            },
+            {
+              "name": "no PWM in FAULT",
+              "kind": "at",
+              "signal": "pwm_allowed",
+              "t": 2.15,
+              "min": 0,
+              "max": 0
+            }
+          ]
+        },
+        {
+          "name": "overtemp while starting, latch, reset",
+          "duration": 1.5,
+          "inputs": {
+            "enable_cmd": {
+              "pulse": {
+                "t0": 0.1,
+                "t1": 1.0
+              }
+            },
+            "speed_rpm": {
+              "const": 0
+            },
+            "overtemp": {
+              "pulse": {
+                "t0": 0.3,
+                "t1": 0.4
+              }
+            }
+          },
+          "checks": [
+            {
+              "name": "FAULT from STARTING",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.35,
+              "min": 3,
+              "max": 3
+            },
+            {
+              "name": "latched after cause clears",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.8,
+              "min": 3,
+              "max": 3
+            },
+            {
+              "name": "OFF after disable",
+              "kind": "at",
+              "signal": "mode",
+              "t": 1.2,
+              "min": 0,
+              "max": 0
+            }
+          ]
+        },
+        {
+          "name": "disable while running",
+          "duration": 1.0,
+          "inputs": {
+            "enable_cmd": {
+              "pulse": {
+                "t0": 0.1,
+                "t1": 0.6
+              }
+            },
+            "speed_rpm": {
+              "const": 800
+            },
+            "overtemp": {
+              "const": 0
+            }
+          },
+          "checks": [
+            {
+              "name": "RUN",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.5,
+              "min": 2,
+              "max": 2
+            },
+            {
+              "name": "OFF after disable in RUN",
+              "kind": "at",
+              "signal": "mode",
+              "t": 0.7,
+              "min": 0,
+              "max": 0
+            },
+            {
+              "name": "no PWM when OFF",
+              "kind": "at",
+              "signal": "pwm_allowed",
+              "t": 0.7,
+              "min": 0,
+              "max": 0
+            }
+          ]
+        }
+      ]
+    }
+    ```

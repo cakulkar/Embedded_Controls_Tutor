@@ -167,3 +167,20 @@ generated from the definition). Real Stateflow charts are graded directly throug
 | Content B04: code structure, float32 numerics, B2B practice; coulomb-counter practical where the naive model passes MIL and fails SIL | `test_sil_exercise_quality_bar` (`mil_passing_mutants`) |
 
 Not generated: fixed-point data types, AUTOSAR RTE wrappers, Simulink Coder file layout/naming options.
+
+## Phase 7 — Guidelines, coverage, requirements, verification — **DONE (2026-10-29)**
+
+| Item | Evidence |
+|---|---|
+| 12 modelling-guideline rules (naming, rate transitions, division, integrator limits, float equality, LUT extrapolation, complexity, chart completeness/reachability); shown in Studio "Check model" | `test_each_rule_triggers`, `test_chart_rules` |
+| Model decision coverage (Saturation, Switch, relational/logical, MinMax, LUT, limited integrators, rate limiter, Abs, chart states/transitions) | `test_coverage_outcomes_and_collection` |
+| Requirements store (levels, status, parent hierarchy with cycle check, trace links), import from exercises | `test_requirement_store_rules`, `test_import_requirements_from_exercise_and_trace` |
+| ReqIF 1.0 export/import (round trip; foreign attribute reporting) | `test_reqif_round_trip_and_foreign_import` |
+| Traceability matrix from check names; HTML verification report | `test_testing_center_and_requirements` |
+| `test_design` exercises: learner writes tests, graded on correctness, coverage and seeded-fault detection | `test_test_design_*` |
+| Screens: Requirements Manager, Testing & Validation Center | GUI tests |
+| Content B05: guidelines and reviews, requirements-based testing, coverage vs fault detection; test-design practical where a 100%-coverage suite still misses a fault | `test_test_design_reference_passes_weak_and_starter_fail` |
+
+Coverage is *decision coverage of model constructs* (not condition/MC-DC, not code coverage). The ReqIF
+subset is tested against ECSim's own export and modified variants. Please try an export from your
+requirements tool.

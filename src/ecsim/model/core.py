@@ -310,6 +310,7 @@ class Simulator:
             self.state[bid] = bt.init(self.ctx[bid])
             self.out[bid] = [0.0] * b.n_out
         self._ext = [0.0] * len(compiled.inports)
+        self.observer = None    # callable(block_id, CBlock, u, y, state) after each block output (coverage)
 
     @property
     def t(self) -> float:
@@ -340,9 +341,12 @@ class Simulator:
             if b.type == "Inport":
                 continue
             bt = block_type(b.type)
-            y = bt.output(self.ctx[bid], self.state[bid], self._u(b))
+            u = self._u(b)
+            y = bt.output(self.ctx[bid], self.state[bid], u)
             if y:
                 self.out[bid] = [float(v) for v in y]
+            if self.observer is not None:
+                self.observer(bid, b, u, self.out[bid], self.state[bid])
         result = [self.out[c.blocks[o].inputs[0][0]][c.blocks[o].inputs[0][1]] for o in c.outports]
         for bid in hits:
             b = c.blocks[bid]
